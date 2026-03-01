@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.kernel.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.kernel.org)",
+      "WebFetch(domain:archive.kernel.org)",
+      "WebFetch(domain:embetronicx.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
