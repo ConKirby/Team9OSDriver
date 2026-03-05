@@ -15,26 +15,13 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "../module/echo_ioctl.h"
 #include "echo_visualizer.h"
 
 /* Import the global shutdown flag from echo_app.c */
 extern volatile sig_atomic_t running;
 
-/*
- * User-space compatible copy of struct echo_state_snapshot.
- * The kernel version uses u32/u16 types which are not available here,
- * so we mirror the layout with fixed-width stdint types.
- */
-struct echo_state_snapshot {
-	uint32_t mode;
-	uint16_t pan_angle;
-	uint16_t tilt_angle;
-	uint32_t buffer_count;
-	uint32_t total_moves;
-	uint32_t total_replays;
-};
-
-/* FIFO capacity — must match ECHO_FIFO_SIZE in echo_main.h */
+/* FIFO capacity — must match ECHO_FIFO_SIZE in echo_types.h */
 #define ECHO_FIFO_SIZE 256
 
 /* ------------------------------------------------------------------ */
@@ -42,10 +29,10 @@ struct echo_state_snapshot {
 static const char *mode_name(uint32_t mode)
 {
 	switch (mode) {
-	case 0:  return "IDLE";
-	case 1:  return "TEACH";
-	case 2:  return "REPLAY";
-	default: return "UNKNOWN";
+	case ECHO_MODE_VAL_IDLE:   return "IDLE";
+	case ECHO_MODE_VAL_TEACH:  return "TEACH";
+	case ECHO_MODE_VAL_REPLAY: return "REPLAY";
+	default:                   return "UNKNOWN";
 	}
 }
 
@@ -75,7 +62,7 @@ static void format_bar(char *buf, size_t buf_sz, int filled, int bar_len)
 void *echo_visualizer_run(void *arg)
 {
 	int fd = (int)(long)arg;
-	struct echo_state_snapshot snap;
+	struct echo_snapshot snap;
 	ssize_t n;
 	char pan_bar[32];
 	char tilt_bar[32];
@@ -100,7 +87,7 @@ void *echo_visualizer_run(void *arg)
 			continue;
 		}
 
-		if ((size_t)n != sizeof(snap))
+		if ((size_t)n < sizeof(snap))
 			continue;   /* short read — skip this frame */
 
 		/* Build progress bars (0-180 mapped to 0-bar_len) */
@@ -127,6 +114,7 @@ void *echo_visualizer_run(void *arg)
 			 snap.buffer_count, ECHO_FIFO_SIZE);
 		mvprintw(row++, 2, "\xe2\x95\x91 Moves:   %-26u\xe2\x95\x91", snap.total_moves);
 		mvprintw(row++, 2, "\xe2\x95\x91 Replays: %-26u\xe2\x95\x91", snap.total_replays);
+		mvprintw(row++, 2, "\xe2\x95\x91 IRQs:    %-26u\xe2\x95\x91", snap.irq_count);
 		mvprintw(row++, 2, "\xe2\x95\x9a\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x9d");
 
 		mvprintw(row + 1, 2, "Press Ctrl-C to quit.");

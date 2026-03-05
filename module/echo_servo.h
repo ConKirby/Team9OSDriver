@@ -1,12 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * echo_servo.h — I2C / PCA9685 servo subsystem (leaf — no dependencies)
+ */
 #ifndef ECHO_SERVO_H
 #define ECHO_SERVO_H
 
-struct echo_device;
+#include <linux/types.h>
 
-int echo_servo_init(struct echo_device *dev);
-void echo_servo_cleanup(struct echo_device *dev);
-int echo_servo_set_angle(struct echo_device *dev, u8 servo_id, u16 angle);
-u16 echo_servo_get_angle(struct echo_device *dev, u8 servo_id);
+struct echo_servo_ctx;
+
+struct echo_servo_ctx *echo_servo_create(bool sim_mode);
+void echo_servo_destroy(struct echo_servo_ctx *ctx);
+
+int echo_servo_set_angle(struct echo_servo_ctx *ctx, u8 servo_id, u16 angle);
+u16 echo_servo_get_angle(struct echo_servo_ctx *ctx, u8 servo_id);
 
 #endif /* ECHO_SERVO_H */

@@ -2,84 +2,36 @@
 /*
  * echo_joystick.c — GPIO joystick input with threaded IRQ handlers
  *
- * Reads five-way joystick (up/down/left/right/button) via GPIO interrupts
- * and translates physical input into servo movements and mode changes.
+ * Reads a 5-way joystick via GPIO interrupts and fires ops callbacks
+ * for direction presses and button presses.
+ *
+ * Dependencies: echo_joystick_ops callbacks only (wired by echo_main.c).
  */
 
-#include "echo_main.h"
-#include "echo_joystick.h"
-#include "echo_state.h"
-
+#include <linux/atomic.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
 #include <linux/jiffies.h>
+#include <linux/printk.h>
+#include <linux/slab.h>
 
-/* ---------- IRQ handlers ---------- */
+#include "echo_types.h"
+#include "echo_joystick.h"
 
-static irqreturn_t joystick_hardirq(int irq, void *data)
-{
-	return IRQ_WAKE_THREAD;
-}
+/* ── Private context ───────────────────────────────────────────────── */
+struct echo_joystick_ctx {
+	int gpio_pins[ECHO_NUM_GPIO];
+	int irqs[ECHO_NUM_GPIO];
+	unsigned long last_irq_jiffies[ECHO_NUM_GPIO];
+	bool sim_mode;
 
-static irqreturn_t joystick_thread_fn(int irq, void *data)
-{
-	struct echo_device *dev = data;
-	int pin_idx = -1;
-	int i;
-	enum echo_mode cur_mode;
+	const struct echo_joystick_ops *ops;
+	void *ops_data;
 
-	/* Identify which GPIO pin fired */
-	for (i = 0; i < ECHO_NUM_GPIO; i++) {
-		if (irq == dev->irqs[i]) {
-			pin_idx = i;
-			break;
-		}
-	}
-	if (pin_idx < 0)
-		return IRQ_HANDLED;
+	atomic_t irq_count;
+};
 
-	/* Debounce: ignore if too soon after the last interrupt on this pin */
-	if (jiffies - dev->last_irq_jiffies[pin_idx] <
-	    msecs_to_jiffies(ECHO_DEBOUNCE_MS))
-		return IRQ_HANDLED;
-
-	dev->last_irq_jiffies[pin_idx] = jiffies;
-	atomic_inc(&dev->stat_irq_count);
-
-	/* Map the pin to the appropriate action */
-	switch (pin_idx) {
-	case ECHO_GPIO_UP:
-		echo_state_handle_input(dev, ECHO_SERVO_TILT, +ECHO_ANGLE_STEP);
-		break;
-	case ECHO_GPIO_DOWN:
-		echo_state_handle_input(dev, ECHO_SERVO_TILT, -ECHO_ANGLE_STEP);
-		break;
-	case ECHO_GPIO_LEFT:
-		echo_state_handle_input(dev, ECHO_SERVO_PAN, -ECHO_ANGLE_STEP);
-		break;
-	case ECHO_GPIO_RIGHT:
-		echo_state_handle_input(dev, ECHO_SERVO_PAN, +ECHO_ANGLE_STEP);
-		break;
-	case ECHO_GPIO_BUTTON:
-		/* Toggle mode: IDLE/TEACH -> TEACH, REPLAY -> stop */
-		spin_lock(&dev->mode_lock);
-		cur_mode = dev->mode;
-		spin_unlock(&dev->mode_lock);
-
-		if (cur_mode == ECHO_MODE_IDLE ||
-		    cur_mode == ECHO_MODE_TEACH)
-			echo_state_set_mode(dev, ECHO_MODE_TEACH);
-		else if (cur_mode == ECHO_MODE_REPLAY)
-			echo_state_stop(dev);
-		break;
-	default:
-		break;
-	}
-
-	return IRQ_HANDLED;
-}
-
-/* ---------- Names for each GPIO request ---------- */
+/* ── GPIO names for request_threaded_irq ───────────────────────────── */
 
 static const char * const gpio_names[ECHO_NUM_GPIO] = {
 	"echo_joy_up",
@@ -89,78 +41,161 @@ static const char * const gpio_names[ECHO_NUM_GPIO] = {
 	"echo_joy_button",
 };
 
-/* ---------- Init / Cleanup ---------- */
+/* ── IRQ handlers ──────────────────────────────────────────────────── */
 
-int echo_joystick_init(struct echo_device *dev)
+static irqreturn_t joystick_hardirq(int irq, void *data)
 {
+	return IRQ_WAKE_THREAD;
+}
+
+static irqreturn_t joystick_thread_fn(int irq, void *data)
+{
+	struct echo_joystick_ctx *ctx = data;
+	int pin_idx = -1;
+	int i;
+
+	/* Identify which GPIO pin fired */
+	for (i = 0; i < ECHO_NUM_GPIO; i++) {
+		if (irq == ctx->irqs[i]) {
+			pin_idx = i;
+			break;
+		}
+	}
+	if (pin_idx < 0)
+		return IRQ_HANDLED;
+
+	/* Debounce */
+	if (jiffies - ctx->last_irq_jiffies[pin_idx] <
+	    msecs_to_jiffies(ECHO_DEBOUNCE_MS))
+		return IRQ_HANDLED;
+
+	ctx->last_irq_jiffies[pin_idx] = jiffies;
+	atomic_inc(&ctx->irq_count);
+
+	/* Map pin to callback */
+	switch (pin_idx) {
+	case ECHO_GPIO_UP:
+		ctx->ops->on_direction(ctx->ops_data,
+				       ECHO_SERVO_TILT, +ECHO_ANGLE_STEP);
+		break;
+	case ECHO_GPIO_DOWN:
+		ctx->ops->on_direction(ctx->ops_data,
+				       ECHO_SERVO_TILT, -ECHO_ANGLE_STEP);
+		break;
+	case ECHO_GPIO_LEFT:
+		ctx->ops->on_direction(ctx->ops_data,
+				       ECHO_SERVO_PAN, -ECHO_ANGLE_STEP);
+		break;
+	case ECHO_GPIO_RIGHT:
+		ctx->ops->on_direction(ctx->ops_data,
+				       ECHO_SERVO_PAN, +ECHO_ANGLE_STEP);
+		break;
+	case ECHO_GPIO_BUTTON:
+		ctx->ops->on_button(ctx->ops_data);
+		break;
+	default:
+		break;
+	}
+
+	return IRQ_HANDLED;
+}
+
+/* ── Public API ────────────────────────────────────────────────────── */
+
+struct echo_joystick_ctx *echo_joystick_create(
+		const int gpio_pins[ECHO_NUM_GPIO],
+		bool sim_mode,
+		const struct echo_joystick_ops *ops,
+		void *ops_data)
+{
+	struct echo_joystick_ctx *ctx;
 	int i, ret;
 
-	if (dev->sim_mode) {
-		pr_info("echo: Joystick: simulation mode (no GPIO)\n");
-		return 0;
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return ERR_PTR(-ENOMEM);
+
+	ctx->sim_mode = sim_mode;
+	ctx->ops      = ops;
+	ctx->ops_data = ops_data;
+	atomic_set(&ctx->irq_count, 0);
+
+	for (i = 0; i < ECHO_NUM_GPIO; i++)
+		ctx->gpio_pins[i] = gpio_pins[i];
+
+	if (sim_mode) {
+		pr_info("echo: joystick: simulation mode (no GPIO)\n");
+		return ctx;
 	}
 
 	for (i = 0; i < ECHO_NUM_GPIO; i++) {
-		ret = gpio_request(dev->gpio_pins[i], gpio_names[i]);
+		ret = gpio_request(ctx->gpio_pins[i], gpio_names[i]);
 		if (ret) {
-			pr_err("echo: Failed to request GPIO %d (%s): %d\n",
-			       dev->gpio_pins[i], gpio_names[i], ret);
+			pr_err("echo: joystick: GPIO %d request failed (%d)\n",
+			       ctx->gpio_pins[i], ret);
 			goto err_gpio;
 		}
 
-		ret = gpio_direction_input(dev->gpio_pins[i]);
+		ret = gpio_direction_input(ctx->gpio_pins[i]);
 		if (ret) {
-			pr_err("echo: Failed to set GPIO %d as input: %d\n",
-			       dev->gpio_pins[i], ret);
-			gpio_free(dev->gpio_pins[i]);
+			pr_err("echo: joystick: GPIO %d set input failed (%d)\n",
+			       ctx->gpio_pins[i], ret);
+			gpio_free(ctx->gpio_pins[i]);
 			goto err_gpio;
 		}
 
-		dev->irqs[i] = gpio_to_irq(dev->gpio_pins[i]);
-		if (dev->irqs[i] < 0) {
-			pr_err("echo: Failed to get IRQ for GPIO %d: %d\n",
-			       dev->gpio_pins[i], dev->irqs[i]);
-			ret = dev->irqs[i];
-			gpio_free(dev->gpio_pins[i]);
+		ctx->irqs[i] = gpio_to_irq(ctx->gpio_pins[i]);
+		if (ctx->irqs[i] < 0) {
+			pr_err("echo: joystick: GPIO %d to IRQ failed (%d)\n",
+			       ctx->gpio_pins[i], ctx->irqs[i]);
+			ret = ctx->irqs[i];
+			gpio_free(ctx->gpio_pins[i]);
 			goto err_gpio;
 		}
 
-		ret = request_threaded_irq(dev->irqs[i],
+		ret = request_threaded_irq(ctx->irqs[i],
 					   joystick_hardirq,
 					   joystick_thread_fn,
 					   IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-					   gpio_names[i], dev);
+					   gpio_names[i], ctx);
 		if (ret) {
-			pr_err("echo: Failed to request IRQ %d for GPIO %d: %d\n",
-			       dev->irqs[i], dev->gpio_pins[i], ret);
-			gpio_free(dev->gpio_pins[i]);
+			pr_err("echo: joystick: IRQ %d request failed (%d)\n",
+			       ctx->irqs[i], ret);
+			gpio_free(ctx->gpio_pins[i]);
 			goto err_gpio;
 		}
 	}
 
-	pr_info("echo: Joystick initialised (%d GPIO pins)\n", ECHO_NUM_GPIO);
-	return 0;
+	pr_info("echo: joystick: initialised (%d GPIO pins)\n", ECHO_NUM_GPIO);
+	return ctx;
 
 err_gpio:
-	/* Clean up already-initialised pins (indices 0 .. i-1) */
 	while (--i >= 0) {
-		free_irq(dev->irqs[i], dev);
-		gpio_free(dev->gpio_pins[i]);
+		free_irq(ctx->irqs[i], ctx);
+		gpio_free(ctx->gpio_pins[i]);
 	}
-	return ret;
+	kfree(ctx);
+	return ERR_PTR(ret);
 }
 
-void echo_joystick_cleanup(struct echo_device *dev)
+void echo_joystick_destroy(struct echo_joystick_ctx *ctx)
 {
 	int i;
 
-	if (dev->sim_mode)
+	if (!ctx)
 		return;
 
-	for (i = ECHO_NUM_GPIO - 1; i >= 0; i--) {
-		free_irq(dev->irqs[i], dev);
-		gpio_free(dev->gpio_pins[i]);
+	if (!ctx->sim_mode) {
+		for (i = ECHO_NUM_GPIO - 1; i >= 0; i--) {
+			free_irq(ctx->irqs[i], ctx);
+			gpio_free(ctx->gpio_pins[i]);
+		}
 	}
 
-	pr_info("echo: Joystick cleaned up\n");
+	kfree(ctx);
+}
+
+int echo_joystick_get_irq_count(struct echo_joystick_ctx *ctx)
+{
+	return atomic_read(&ctx->irq_count);
 }

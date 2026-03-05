@@ -1,69 +1,56 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * echo_proc.c — /proc/echo_stats interface for Project Echo
+ * echo_proc.c — /proc/echo_stats read-only statistics interface
  *
- * Exposes a read-only /proc entry using the seq_file single-open helper.
+ * Uses seq_file single-open helper.  Queries all subsystem contexts
+ * through echo_device back-pointer.
+ *
+ * Dependencies: echo_device (echo_main.h) → all subsystem public APIs.
  */
 
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 
 #include "echo_main.h"
 #include "echo_proc.h"
+#include "echo_servo.h"
+#include "echo_state.h"
 #include "echo_buffer.h"
+#include "echo_joystick.h"
+#include "echo_chardev.h"
 
-/* Persistent handle so cleanup can remove the entry */
-static struct proc_dir_entry *echo_proc_entry;
+/* ── Private context ───────────────────────────────────────────────── */
+struct echo_proc_ctx {
+	struct proc_dir_entry *entry;
+	struct echo_device    *dev;
+};
 
-/* ------------------------------------------------------------------ */
-/*  seq_file show callback                                            */
-/* ------------------------------------------------------------------ */
+/* ── seq_file show callback ────────────────────────────────────────── */
 
 static int echo_proc_show(struct seq_file *m, void *v)
 {
-	struct echo_device *dev = echo_dev;
+	struct echo_device *dev = m->private;
 	enum echo_mode cur_mode;
+	const char *mode_str;
 	u16 pan, tilt;
 	unsigned int buf_count;
 	int total_moves, total_replays, irq_count, open_cnt;
-	unsigned long flags;
-	const char *mode_str;
 
-	/* Mode — protected by spinlock */
-	spin_lock_irqsave(&dev->mode_lock, flags);
-	cur_mode = dev->mode;
-	spin_unlock_irqrestore(&dev->mode_lock, flags);
-
+	cur_mode = echo_state_get_mode(dev->state);
 	switch (cur_mode) {
-	case ECHO_MODE_TEACH:
-		mode_str = "TEACH";
-		break;
-	case ECHO_MODE_REPLAY:
-		mode_str = "REPLAY";
-		break;
-	default:
-		mode_str = "IDLE";
-		break;
+	case ECHO_MODE_TEACH:  mode_str = "TEACH";  break;
+	case ECHO_MODE_REPLAY: mode_str = "REPLAY"; break;
+	default:               mode_str = "IDLE";   break;
 	}
 
-	/* Servo positions — protected by mutex */
-	mutex_lock(&dev->servo_lock);
-	pan  = dev->servo_pos[ECHO_SERVO_PAN];
-	tilt = dev->servo_pos[ECHO_SERVO_TILT];
-	mutex_unlock(&dev->servo_lock);
-
-	/* Buffer usage */
-	buf_count = echo_buffer_count(dev);
-
-	/* Atomic stats */
-	total_moves   = atomic_read(&dev->stat_total_moves);
-	total_replays = atomic_read(&dev->stat_replays);
-	irq_count     = atomic_read(&dev->stat_irq_count);
-
-	/* Open count — protected by mutex */
-	mutex_lock(&dev->open_lock);
-	open_cnt = dev->open_count;
-	mutex_unlock(&dev->open_lock);
+	pan  = echo_servo_get_angle(dev->servo, ECHO_SERVO_PAN);
+	tilt = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT);
+	buf_count     = echo_buffer_count(dev->buffer);
+	total_moves   = echo_state_get_total_moves(dev->state);
+	total_replays = echo_buffer_get_replay_count(dev->buffer);
+	irq_count     = echo_joystick_get_irq_count(dev->joystick);
+	open_cnt      = echo_chardev_get_open_count(dev->chardev);
 
 	seq_puts(m, "=== Project Echo Stats ===\n");
 	seq_printf(m, "Mode:           %s\n", mode_str);
@@ -80,13 +67,11 @@ static int echo_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/*  proc_ops callbacks                                                */
-/* ------------------------------------------------------------------ */
+/* ── proc_ops ──────────────────────────────────────────────────────── */
 
 static int echo_proc_open(struct inode *inode, struct file *filp)
 {
-	return single_open(filp, echo_proc_show, NULL);
+	return single_open(filp, echo_proc_show, pde_data(inode));
 }
 
 static const struct proc_ops echo_proc_ops = {
@@ -96,24 +81,33 @@ static const struct proc_ops echo_proc_ops = {
 	.proc_release = single_release,
 };
 
-/* ------------------------------------------------------------------ */
-/*  init / cleanup                                                    */
-/* ------------------------------------------------------------------ */
+/* ── Public API ────────────────────────────────────────────────────── */
 
-int echo_proc_init(struct echo_device *dev)
+struct echo_proc_ctx *echo_proc_create(struct echo_device *dev)
 {
-	echo_proc_entry = proc_create("echo_stats", 0444, NULL,
-				      &echo_proc_ops);
-	if (!echo_proc_entry) {
-		pr_err("echo: failed to create /proc/echo_stats\n");
-		return -ENOMEM;
+	struct echo_proc_ctx *ctx;
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return ERR_PTR(-ENOMEM);
+
+	ctx->dev = dev;
+	ctx->entry = proc_create_data("echo_stats", 0444, NULL,
+				      &echo_proc_ops, dev);
+	if (!ctx->entry) {
+		pr_err("echo: proc: failed to create /proc/echo_stats\n");
+		kfree(ctx);
+		return ERR_PTR(-ENOMEM);
 	}
 
-	pr_info("echo: /proc/echo_stats created\n");
-	return 0;
+	pr_info("echo: proc: /proc/echo_stats created\n");
+	return ctx;
 }
 
-void echo_proc_cleanup(struct echo_device *dev)
+void echo_proc_destroy(struct echo_proc_ctx *ctx)
 {
+	if (!ctx)
+		return;
 	remove_proc_entry("echo_stats", NULL);
+	kfree(ctx);
 }

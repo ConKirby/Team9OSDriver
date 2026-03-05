@@ -24,22 +24,6 @@
 /* Import the global shutdown flag from echo_app.c */
 extern volatile sig_atomic_t running;
 
-/* ------------------------------------------------------------------ *
- * User-space mirror of kernel structures / constants                  *
- * ------------------------------------------------------------------ */
-
-struct echo_cmd {
-	uint32_t command;
-	uint32_t servo_id;
-	uint32_t angle;
-	uint32_t speed;
-};
-
-#define ECHO_CMD_TEACH   1
-#define ECHO_CMD_REPLAY  2
-#define ECHO_CMD_STOP    3
-#define ECHO_CMD_MOVE    4
-
 /* ------------------------------------------------------------------ */
 
 static void print_menu(void)
@@ -151,7 +135,7 @@ static void do_move(int fd)
 
 static void do_get_state(int fd)
 {
-	struct echo_ioctl_state st;
+	struct echo_snapshot st;
 
 	memset(&st, 0, sizeof(st));
 
