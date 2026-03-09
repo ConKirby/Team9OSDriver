@@ -1,65 +1,48 @@
-# Project Echo - Testing Guide
+# Project Echo — Testing Guide
 
 ## 1. Prerequisites
 
-| Requirement        | Notes                                                    |
-| ------------------ | -------------------------------------------------------- |
-| Raspberry Pi 5     | Or any Linux machine for simulation mode                 |
-| Kernel headers     | `sudo apt install linux-headers-$(uname -r)`             |
-| Build tools        | `sudo apt install build-essential make`                  |
-| ncurses            | `sudo apt install libncurses-dev`                        |
-| Python 3           | Required for the non-blocking read stress test           |
+| Requirement | Notes |
+|-------------|-------|
+| Raspberry Pi 5 | Or any Linux machine for simulation mode |
+| Kernel headers | `sudo apt install linux-headers-$(uname -r)` |
+| Build tools | `sudo apt install build-essential make` |
+| ncurses | `sudo apt install libncurses-dev` |
+| Python 3 | For the non-blocking read stress test |
 
-## 2. Build Instructions
+---
 
-### Kernel Module
+## 2. Build and Load
+
+### Build the module
 
 ```bash
 cd module/
 make
 ```
 
-A successful build produces `echo_robot.ko`.  Verify:
+Verify: `ls -la echo_robot.ko && modinfo echo_robot.ko`
 
-```bash
-ls -la echo_robot.ko
-modinfo echo_robot.ko
-```
-
-### User-Space Application
+### Build the app
 
 ```bash
 cd app/
-gcc -Wall -Wextra -pthread -lncurses -o echo_app echo_app.c
+make
 ```
 
-## 3. Loading the Module
-
-### Simulation Mode (default)
+### Load (simulation mode)
 
 ```bash
-cd scripts/
-sudo ./load_module.sh
+sudo scripts/load_module.sh
 ```
 
-This loads with `sim_mode=1`.  No PCA9685 or GPIO hardware is needed.
-
-### Real Hardware Mode
+### Load (real hardware)
 
 ```bash
-sudo ./load_module.sh sim_mode=0
+sudo scripts/load_module.sh sim_mode=0
 ```
 
-Requires a PCA9685 at I2C address 0x40 on bus 1 and a five-way joystick wired
-to the default GPIO pins (17, 27, 22, 23, 24).
-
-### Custom Parameters
-
-```bash
-sudo ./load_module.sh sim_mode=0 gpio_up=5 gpio_down=6 timeout_ms=10000
-```
-
-### Verify Loading
+### Verify loading
 
 ```bash
 lsmod | grep echo_robot
@@ -68,206 +51,281 @@ cat /proc/echo_stats
 dmesg | tail -20
 ```
 
-Expected `dmesg` output on clean init:
+### Unload
 
+```bash
+sudo scripts/unload_module.sh
 ```
-echo_robot: module loaded (sim_mode=1, timeout=5000 ms)
-Servo: simulation mode
-echo: Buffer subsystem initialized
-echo: State machine initialized
-echo: Joystick: simulation mode (no GPIO)
-echo: chardev registered (237:0)
-echo: /proc/echo_stats created
-```
+
+---
+
+## 3. Test Strategy
+
+The tests are organised by what they validate:
+
+| Category | Tests | What they prove |
+|----------|-------|----------------|
+| Lifecycle | 1, 2 | Module loads/unloads cleanly, no memory leaks |
+| Blocking I/O | 3, 4 | read() blocks, write(REPLAY) blocks — core assessment feature |
+| State machine | 5, 6 | Mode transitions work correctly |
+| Hardware | 7 | GPIO interrupts and I2C servo control |
+| Interfaces | 8, 9 | /proc, ioctl, all return correct data |
+| Stress | 10 | Concurrent access, rapid open/close, no deadlocks |
+
+---
 
 ## 4. Manual Test Procedures
 
 ### Test 1: Load/Unload Cycle
 
-**Purpose:** Confirm the module loads and unloads without errors.
+**Purpose:** Module loads and unloads without errors or leaks.
 
 ```bash
-cd scripts/
-sudo ./load_module.sh
+sudo scripts/load_module.sh
 cat /proc/echo_stats
-sudo ./unload_module.sh
+sudo scripts/unload_module.sh
 dmesg | tail -15
 ```
 
-**Expected result:**
-- Module loads successfully, `/dev/echo_robot` appears.
-- `/proc/echo_stats` shows default values (IDLE mode, 90/90 angles, 0 counts).
-- Module unloads cleanly.
-- `dmesg` shows no errors, warnings, or kernel oops.
+**Pass criteria:**
+- `/dev/echo_robot` appears on load, disappears on unload
+- `/proc/echo_stats` shows default values (IDLE, 90/90, all counters 0)
+- `dmesg` shows clean init and exit messages, no errors/warnings/oops
+- Repeated load/unload (5+ cycles) produces no issues
 
-Expected `dmesg` on clean exit:
-
+**Expected dmesg on init:**
 ```
-echo_robot: module unloaded
-echo: /proc/echo_stats removed
-echo: chardev unregistered
-echo: Joystick cleaned up
-echo: State machine cleaned up
-echo: Buffer subsystem cleaned up
+echo: servo: simulation mode
+echo: buffer: subsystem created
+echo: state: subsystem created (timeout=5000 ms)
+echo: joystick: simulation mode (no GPIO)
+echo: chardev: registered (237:0)
+echo: proc: /proc/echo_stats created
+echo: module loaded (sim_mode=1, timeout=5000 ms)
+```
+
+**Expected dmesg on exit:**
+```
+echo: module unloaded
 ```
 
 ### Test 2: Simulation Mode Operation
 
-**Purpose:** Verify that all subsystems work without real hardware.
+**Purpose:** All subsystems work without real hardware.
 
 ```bash
-# In one terminal
-sudo ./scripts/load_module.sh
-sudo ./app/echo_app
+sudo scripts/load_module.sh
+sudo app/echo_app
 ```
 
-In the application:
-1. Select TEACH mode from the menu.
-2. Issue a MOVE command (e.g., servo 0, angle 45).
-3. Verify `/proc/echo_stats` updates:
-   ```bash
-   cat /proc/echo_stats
-   ```
-4. Check `dmesg` for `Servo[0] = 45 (sim)` messages.
+In the app:
+1. Select TEACH from menu
+2. Issue MOVE command (servo 0, angle 45)
+3. Check `cat /proc/echo_stats` in another terminal
+4. Check `dmesg | tail` for `servo[0] = 45 (sim)`
 
-**Expected result:** Angles update in the stats output.  `dmesg` shows
-simulated servo movements.  No I2C or GPIO errors.
+**Pass criteria:**
+- Stats show updated angle and buffer count
+- `dmesg` shows simulated servo messages
+- No I2C or GPIO errors
 
 ### Test 3: Blocking Read Verification
 
-**Purpose:** Confirm that `read()` blocks until new data arrives.
+**Purpose:** `read()` blocks until new data arrives.
 
 ```bash
-# Terminal 1 - this will hang (block) waiting for data
+# Terminal 1 — this will HANG (that's correct behaviour)
 sudo dd if=/dev/echo_robot bs=64 count=1 | xxd
 ```
 
 ```bash
-# Terminal 2 - trigger a state change via write
-# (use the echo_app or a custom C program to write an ECHO_CMD_MOVE)
-sudo ./app/echo_app
-# Issue a MOVE command
+# Terminal 2 — trigger a state change
+sudo app/echo_app
+# Issue a MOVE command from the menu
 ```
 
-**Expected result:**
-- Terminal 1 hangs until Terminal 2 triggers a state change.
-- Once triggered, Terminal 1 receives an `echo_state_snapshot` struct (24 bytes).
-- Verify with `xxd` that the fields match the current state.
+**Pass criteria:**
+- Terminal 1 hangs until Terminal 2 triggers a change
+- Once triggered, Terminal 1 receives 24 bytes (size of `echo_snapshot`)
+- `xxd` output shows the snapshot fields
 
-### Test 4: Blocking Write Verification
+### Test 4: Blocking Write (REPLAY) Verification
 
-**Purpose:** Confirm that `write(ECHO_CMD_REPLAY)` blocks until replay completes.
+**Purpose:** `write(ECHO_CMD_REPLAY)` blocks until replay completes.
 
-1. Load the module and start the application.
-2. Enter TEACH mode and record several moves.
-3. Issue a REPLAY command.
-4. Observe that the write call does not return until the replay worker has
-   finished playing back all recorded moves.
+1. Load module, start app
+2. Enter TEACH mode, record several moves (MOVE commands)
+3. Issue REPLAY command from controller menu
+4. Observe: the write call does not return until replay finishes
 
-**Expected result:** The write call blocks for the duration of the replay. The
-application regains control only after the final move is played. Check `dmesg`
-for "Replay started" and "Replay finished" messages.
+**Pass criteria:**
+- Write call blocks for the duration of replay
+- `dmesg` shows "replay started (N moves)" then "replay finished"
+- App regains control only after the last move plays
 
-### Test 5: Joystick Input Test (Hardware Mode Only)
+### Test 5: State Machine Transitions
 
-**Purpose:** Verify GPIO interrupt handling and servo movement.
+**Purpose:** Verify all mode transitions work correctly.
+
+Test each transition:
+
+| From | Action | Expected To |
+|------|--------|-------------|
+| IDLE | write(TEACH) | TEACH |
+| IDLE | joystick input (hardware mode) | TEACH (auto) |
+| TEACH | write(REPLAY) | REPLAY |
+| TEACH | inactivity timeout (wait 5s) | REPLAY (auto) |
+| REPLAY | replay finishes | IDLE |
+| REPLAY | write(STOP) | IDLE |
+| Any | ioctl(RESET) | IDLE |
+
+Verify each transition by checking `/proc/echo_stats` mode field.
+
+### Test 6: Auto-Replay (Inactivity Timer)
+
+**Purpose:** Timer auto-triggers replay after timeout.
 
 ```bash
-sudo ./scripts/load_module.sh sim_mode=0
+sudo scripts/load_module.sh timeout_ms=3000
+sudo app/echo_app
 ```
 
-1. Press each joystick direction and verify servo angles change in
-   `/proc/echo_stats`.
-2. Press the button and verify mode transitions in the stats output.
-3. Check `dmesg` for IRQ handling messages.
+1. Enter TEACH mode, record a few moves
+2. Wait 3 seconds without input
+3. Check stats — mode should transition TEACH -> REPLAY -> IDLE
 
-**Expected result:**
-- UP/DOWN changes tilt angle by +/- 5 degrees.
-- LEFT/RIGHT changes pan angle by +/- 5 degrees.
-- Button press toggles between IDLE/TEACH modes.
-- IRQ Count increments with each press.
+**Pass criteria:**
+- `dmesg` shows "inactivity timeout — starting replay"
+- Followed by "replay started" and "replay finished"
+- Mode returns to IDLE
 
-### Test 6: Auto-Replay Test
+### Test 7: Joystick Input (Hardware Mode Only)
 
-**Purpose:** Verify the inactivity timer triggers automatic replay.
-
-1. Load the module with a short timeout:
-   ```bash
-   sudo ./scripts/load_module.sh timeout_ms=3000
-   ```
-2. Enter TEACH mode and record a few moves (via the app or joystick).
-3. Wait 3 seconds without any input.
-4. Check `/proc/echo_stats` -- mode should transition to REPLAY, then back to
-   IDLE when done.
-
-**Expected result:** After 3 seconds of inactivity, `dmesg` shows
-"Inactivity timeout -- starting replay", followed by "Replay started" and
-"Replay finished".
-
-### Test 7: /proc/echo_stats Verification
-
-**Purpose:** Confirm all statistics update correctly.
+**Purpose:** GPIO interrupts work and servos move.
 
 ```bash
-cat /proc/echo_stats
+sudo scripts/load_module.sh sim_mode=0
 ```
 
-Run through a sequence of operations and verify each field updates:
+1. Press each joystick direction, verify `/proc/echo_stats` angle changes
+2. Press button, verify mode transitions
+3. Check `dmesg` for IRQ handling
 
-| Field          | When it changes                               |
-| -------------- | --------------------------------------------- |
-| Mode           | On TEACH/REPLAY/STOP/IDLE transitions         |
-| Pan Angle      | On left/right input or MOVE command            |
-| Tilt Angle     | On up/down input or MOVE command               |
-| Buffer Used    | Increments during TEACH, unchanged during REPLAY |
-| Total Moves    | Increments with each servo movement            |
-| Total Replays  | Increments each time replay starts             |
-| IRQ Count      | Increments with each debounced GPIO interrupt  |
-| Open Count     | Increments on open(), decrements on close()    |
-| Sim Mode       | Reflects module parameter                      |
-| Timeout        | Reflects module parameter                      |
+**Pass criteria:**
+- UP/DOWN changes tilt by +/- 5 degrees
+- LEFT/RIGHT changes pan by +/- 5 degrees
+- Button toggles IDLE <-> TEACH
+- IRQ Count increments with each debounced press
 
-### Test 8: ioctl Commands
+### Test 8: /proc/echo_stats Verification
 
-**Purpose:** Verify each ioctl command works correctly.
+**Purpose:** All statistics update correctly.
 
-Test each command from user-space (use the echo_app controller menu or a
-custom test program):
+Run through operations and verify each field:
 
-1. **ECHO_IOC_GET_STATE:** Read state and compare with `/proc/echo_stats`.
-2. **ECHO_IOC_SET_SPEED:** Set speed to 2, replay, verify moves play at
-   double speed (half the original delay).
-3. **ECHO_IOC_RESET:** Reset device, verify mode returns to IDLE, servos
-   center at 90/90, buffer clears.
-4. **ECHO_IOC_SET_MODE:** Set mode to TEACH (1), verify in stats. Set mode to
-   IDLE (0), verify.  Set mode to REPLAY (2), verify replay starts.
+| Field | When it changes |
+|-------|----------------|
+| Mode | On TEACH/REPLAY/STOP/IDLE transitions |
+| Pan Angle | On left/right input or MOVE command |
+| Tilt Angle | On up/down input or MOVE command |
+| Buffer Used | Increments during TEACH, preserved during REPLAY |
+| Total Moves | Increments with each joystick-triggered move |
+| Total Replays | Increments each time replay worker starts |
+| IRQ Count | Increments with each debounced GPIO interrupt |
+| Open Count | Increments on open(), decrements on close() |
+| Sim Mode | Reflects module parameter (does not change) |
+| Timeout | Reflects module parameter |
 
-**Expected result:** All ioctl calls return 0 on success. Invalid arguments
-(e.g., speed = 0, mode = 99) return appropriate error codes (-EINVAL).
+### Test 9: ioctl Commands
 
-## 5. Stress Testing
+**Purpose:** Each ioctl works and validates input.
 
-Run the automated stress test script:
+Test from the app controller menu or a custom test program:
+
+| Command | Test | Expected |
+|---------|------|----------|
+| GET_STATE | Read state, compare with /proc | Matches |
+| SET_SPEED | Set to 2, replay | Moves play at 2x speed |
+| SET_SPEED | Set to 0 | Returns -EINVAL |
+| RESET | Issue reset | Mode=IDLE, angles=90/90, buffer=0 |
+| SET_MODE(1) | Set TEACH | Mode becomes TEACH |
+| SET_MODE(0) | Set IDLE | Mode becomes IDLE |
+| SET_MODE(2) | Set REPLAY | Replay starts |
+| SET_MODE(99) | Invalid | Returns -EINVAL |
+
+---
+
+## 5. Automated Stress Tests
+
+Run the stress test script:
 
 ```bash
-cd scripts/
-sudo ./test_blocking.sh
+sudo scripts/test_blocking.sh
 ```
 
 The script performs six tests:
 
-| # | Test                          | What it validates                          |
-| - | ----------------------------- | ------------------------------------------ |
-| 1 | Device exists                 | `/dev/echo_robot` is a character device    |
-| 2 | /proc interface               | `/proc/echo_stats` is readable             |
-| 3 | Concurrent readers (5 procs)  | Multiple blocking reads do not deadlock    |
-| 4 | Rapid open/close (50 cycles)  | Reference counting handles fast cycling    |
-| 5 | Non-blocking read (O_NONBLOCK)| Returns EAGAIN when no data available      |
-| 6 | Kernel log check              | No error/BUG/oops/panic in dmesg           |
+| # | Test | What it validates |
+|---|------|-------------------|
+| 1 | Device exists | `/dev/echo_robot` is a character device |
+| 2 | /proc interface | `/proc/echo_stats` is readable |
+| 3 | Concurrent readers (5 procs) | Multiple blocking reads do not deadlock |
+| 4 | Rapid open/close (50 cycles) | Reference counting handles fast cycling |
+| 5 | Non-blocking read (O_NONBLOCK) | Returns EAGAIN when no data available |
+| 6 | Kernel log check | No error/BUG/oops/panic in dmesg |
 
-**Expected result:** All tests pass.  The summary line shows `X passed, 0 failed`.
+**Pass criteria:** All tests pass.  Summary shows `X passed, 0 failed`.
 
-## 6. Common Issues and Troubleshooting
+---
+
+## 6. Concurrency Tests
+
+These tests target the locking and synchronisation logic:
+
+### Test: Multiple concurrent readers
+
+Open 5 processes all doing blocking `read()` simultaneously.  Trigger a
+single state change.  All 5 should wake and receive valid snapshots.
+
+```bash
+for i in $(seq 1 5); do
+    timeout 5 dd if=/dev/echo_robot bs=64 count=1 > /dev/null 2>&1 &
+done
+# Trigger a change (e.g., write TEACH via the app)
+wait
+```
+
+### Test: Reader + writer simultaneously
+
+One thread does continuous blocking reads, another does rapid writes
+(TEACH/MOVE/STOP cycle).  No deadlocks or crashes should occur.
+
+### Test: Replay cancellation
+
+Start replay, immediately send STOP.  The replay worker should exit cleanly
+via the `should_stop()` check.  No worker hang or zombie workqueue thread.
+
+---
+
+## 7. Edge Cases to Test
+
+| Scenario | Expected behaviour |
+|----------|-------------------|
+| read() with buffer too small (< 24 bytes) | Returns partial snapshot (min of count and sizeof) |
+| write() with buffer too small (< 16 bytes) | Returns -EINVAL |
+| write() with unknown command (e.g., command=99) | Returns -EINVAL |
+| REPLAY with empty buffer | Replay starts and finishes immediately |
+| REPLAY while already replaying | Returns -EBUSY |
+| STOP while in IDLE | Harmless no-op |
+| RESET during REPLAY | Cancels replay, centers servos |
+| Module unload while device open | rmmod fails with "module in use" |
+| Ctrl-C during blocking read | read() returns -ERESTARTSYS, process exits |
+| Ctrl-C during blocking write(REPLAY) | write() returns -ERESTARTSYS |
+| Buffer full (256 moves) during TEACH | Oldest move silently dropped (kfifo_skip) |
+
+---
+
+## 8. Common Issues and Troubleshooting
 
 ### Module fails to load
 
@@ -275,8 +333,8 @@ The script performs six tests:
 insmod: ERROR: could not insert module echo_robot.ko: Invalid module format
 ```
 
-**Cause:** Module was compiled against different kernel headers.
-**Fix:** Rebuild: `cd module/ && make clean && make`
+**Cause:** Compiled against different kernel headers.
+**Fix:** `cd module/ && make clean && make`
 
 ### Device node not created
 
@@ -285,18 +343,17 @@ Device node not created by udev, creating manually...
 Failed to find major number
 ```
 
-**Cause:** The `class_create` or `device_create` call failed.
-**Fix:** Check `dmesg | tail -20` for the specific error. Ensure no other
-module has claimed the "echo" class name.
+**Cause:** `class_create` or `device_create` failed.
+**Fix:** Check `dmesg | tail -20`.  Ensure no other module uses the "echo"
+class name.
 
-### Permission denied on /dev/echo_robot
+### Permission denied
 
 ```
 open /dev/echo_robot: Permission denied
 ```
 
-**Fix:** Run the application with `sudo` or add a udev rule:
-
+**Fix:** Run with `sudo`, or add a udev rule:
 ```bash
 echo 'KERNEL=="echo_robot", MODE="0666"' | sudo tee /etc/udev/rules.d/99-echo.rules
 sudo udevadm control --reload-rules
@@ -305,95 +362,76 @@ sudo udevadm control --reload-rules
 ### I2C errors (hardware mode)
 
 ```
-Servo: I2C adapter 1 not found
-Servo: PCA9685 init failed (-6)
+echo: servo: I2C adapter 1 not found
 ```
 
-**Cause:** I2C bus 1 is not enabled or PCA9685 is not connected.
 **Fix:**
-1. Enable I2C: `sudo raspi-config` -> Interface Options -> I2C -> Enable
-2. Verify the device: `sudo i2cdetect -y 1` (should show 0x40)
-3. Check wiring between the PCA9685 and the Pi's SDA/SCL pins.
+1. Enable I2C: `sudo raspi-config` -> Interface Options -> I2C
+2. Verify device: `sudo i2cdetect -y 1` (should show 0x40)
+3. Check SDA/SCL wiring
 
 ### GPIO request failed
 
 ```
-echo: Failed to request GPIO 17 (echo_joy_up): -16
+echo: joystick: GPIO 17 request failed (-16)
 ```
 
-**Cause:** GPIO pin is already in use by another driver or overlay.
-**Fix:** Check `/sys/kernel/debug/gpio` for pin usage.  Use different pins
-via module parameters:
-
+**Cause:** Pin already in use.
+**Fix:** Check `/sys/kernel/debug/gpio`.  Use different pins:
 ```bash
 sudo insmod echo_robot.ko sim_mode=0 gpio_up=5 gpio_down=6
 ```
 
-### Module cannot be removed (device busy)
+### Module cannot be removed
 
 ```
 rmmod: ERROR: Module echo_robot is in use
 ```
 
-**Cause:** A user-space process still has `/dev/echo_robot` open.
-**Fix:** Close the application first, then unload:
-
+**Fix:** Close all processes using the device:
 ```bash
-# Find processes using the device
-sudo fuser /dev/echo_robot
-# Kill if needed
 sudo fuser -k /dev/echo_robot
 sudo rmmod echo_robot
 ```
 
 ### Kernel oops or panic
 
-Check `dmesg` for a stack trace. Common causes:
-- NULL pointer dereference (device struct not initialised)
-- Deadlock (lock ordering violation)
-- Use-after-free (module unloaded while device still open)
+Check `dmesg` for full stack trace.  Common causes:
+- NULL pointer dereference (subsystem not created)
+- Deadlock (calling `cancel_work_sync` from inside the worker)
+- Use-after-free (module unloaded while device open)
 
-Report the full `dmesg` output and the steps to reproduce.
+---
 
-## 7. Expected dmesg Output
+## 9. Expected dmesg Messages
 
-### Clean Module Init (Simulation Mode)
-
-```
-[  123.456789] Servo: simulation mode
-[  123.456790] echo: Buffer subsystem initialized
-[  123.456791] echo: State machine initialized
-[  123.456792] echo: Joystick: simulation mode (no GPIO)
-[  123.456793] echo: chardev registered (237:0)
-[  123.456794] echo: /proc/echo_stats created
-[  123.456795] echo_robot: module loaded (sim_mode=1, timeout=5000 ms)
-```
-
-### Clean Module Exit
+### Clean lifecycle (simulation mode)
 
 ```
-[  456.789012] echo_robot: module unloaded
+[  100.000] echo: servo: simulation mode
+[  100.001] echo: buffer: subsystem created
+[  100.002] echo: state: subsystem created (timeout=5000 ms)
+[  100.003] echo: joystick: simulation mode (no GPIO)
+[  100.004] echo: chardev: registered (237:0)
+[  100.005] echo: proc: /proc/echo_stats created
+[  100.006] echo: module loaded (sim_mode=1, timeout=5000 ms)
+[  200.000] echo: chardev: opened (count=1)
+[  201.000] echo: servo[0] = 45 (sim)
+[  206.000] echo: state: inactivity timeout — starting replay
+[  206.001] echo: buffer: replay started (3 moves)
+[  206.500] echo: buffer: replay finished
+[  207.000] echo: chardev: closed (count=0)
+[  300.000] echo: module unloaded
 ```
 
-Between init and exit, you may see messages such as:
+### Clean lifecycle (hardware mode)
 
 ```
-[  200.000000] Device opened (count=1)
-[  201.000000] Servo[0] = 45 (sim)
-[  202.000000] echo: Inactivity timeout - starting replay
-[  202.000001] echo: Replay started (3 moves)
-[  202.500000] echo: Replay finished
-[  203.000000] Device closed (count=0)
-```
-
-### Clean Module Init (Hardware Mode)
-
-```
-[  123.456789] Servo: PCA9685 initialized on I2C bus 1
-[  123.456790] echo: Buffer subsystem initialized
-[  123.456791] echo: State machine initialized
-[  123.456792] echo: Joystick initialised (5 GPIO pins)
-[  123.456793] echo: chardev registered (237:0)
-[  123.456794] echo: /proc/echo_stats created
-[  123.456795] echo_robot: module loaded (sim_mode=0, timeout=5000 ms)
+[  100.000] echo: servo: PCA9685 initialised on I2C bus 1
+[  100.001] echo: buffer: subsystem created
+[  100.002] echo: state: subsystem created (timeout=5000 ms)
+[  100.003] echo: joystick: initialised (5 GPIO pins)
+[  100.004] echo: chardev: registered (237:0)
+[  100.005] echo: proc: /proc/echo_stats created
+[  100.006] echo: module loaded (sim_mode=0, timeout=5000 ms)
 ```
