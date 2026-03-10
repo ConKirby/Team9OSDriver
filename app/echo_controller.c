@@ -1,245 +1,118 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * echo_controller.c - Menu-driven control thread for Project Echo.
+ * echo_controller.c - Command handler for Project Echo.
  *
- * Reads single-character commands from stdin and translates them into
- * write() (for echo_cmd) or ioctl() calls on the device fd.
- *
- * Note: ncurses owns stdout, so all output here goes to stderr.
+ * Processes single keypresses and translates them into write() or
+ * ioctl() calls on the device fd.  A background thread is spawned
+ * for REPLAY since write(REPLAY) blocks until playback finishes.
  */
 
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <time.h>
 #include <unistd.h>
 
 #include "../module/echo_ioctl.h"
 #include "echo_controller.h"
 
-/* Import the global shutdown flag from echo_app.c */
 extern volatile sig_atomic_t running;
 
-/* ------------------------------------------------------------------ */
+static char status_buf[128] = "Ready. Press a key to begin.";
+static pthread_t replay_tid;
+static volatile sig_atomic_t replaying;
 
-static void print_menu(void)
+const char *echo_controller_get_status(void)
 {
-	fprintf(stderr,
-		"\n"
-		"[1] Teach Mode  [2] Replay (blocking)  [3] Stop  [4] Move Servo\n"
-		"[5] Get State   [6] Reset              [7] Set Speed  [q] Quit\n"
-		"> ");
+	return status_buf;
 }
 
-static void do_teach(int fd)
+/* Background thread for blocking REPLAY write */
+static void *replay_worker(void *arg)
 {
+	int fd = (int)(long)arg;
 	struct echo_cmd cmd;
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.command = ECHO_CMD_TEACH;
-
-	if (write(fd, &cmd, sizeof(cmd)) < 0)
-		perror("[controller] write(TEACH)");
-	else
-		fprintf(stderr, "[controller] Entered TEACH mode.\n");
-}
-
-static void do_replay(int fd)
-{
-	struct echo_cmd cmd;
-	struct timespec t_start, t_end;
-	double elapsed;
 
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.command = ECHO_CMD_REPLAY;
 
-	/* Timestamp before the blocking write */
-	clock_gettime(CLOCK_MONOTONIC, &t_start);
-
-	fprintf(stderr, "[controller] Requesting REPLAY at ");
-	{
-		struct timespec t_wall;
-		struct tm tm_buf;
-
-		clock_gettime(CLOCK_REALTIME, &t_wall);
-		localtime_r(&t_wall.tv_sec, &tm_buf);
-		fprintf(stderr, "%02d:%02d:%02d.%03ld\n",
-			tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-			t_wall.tv_nsec / 1000000);
-	}
-
-	/* This write() blocks until the kernel replay work finishes */
-	if (write(fd, &cmd, sizeof(cmd)) < 0) {
-		perror("[controller] write(REPLAY)");
-		return;
-	}
-
-	clock_gettime(CLOCK_MONOTONIC, &t_end);
-	elapsed = (t_end.tv_sec  - t_start.tv_sec)
-		+ (t_end.tv_nsec - t_start.tv_nsec) / 1e9;
-
-	fprintf(stderr, "[controller] Replay finished. Blocked for %.2f seconds.\n",
-		elapsed);
-}
-
-static void do_stop(int fd)
-{
-	struct echo_cmd cmd;
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.command = ECHO_CMD_STOP;
-
 	if (write(fd, &cmd, sizeof(cmd)) < 0)
-		perror("[controller] write(STOP)");
+		snprintf(status_buf, sizeof(status_buf),
+			 "REPLAY failed: %s", strerror(errno));
 	else
-		fprintf(stderr, "[controller] Sent STOP.\n");
-}
+		snprintf(status_buf, sizeof(status_buf), "Replay complete.");
 
-static void do_move(int fd)
-{
-	struct echo_cmd cmd;
-	unsigned int servo_id, angle;
-
-	fprintf(stderr, "  Servo ID (0=pan, 1=tilt): ");
-	if (scanf("%u", &servo_id) != 1) {
-		fprintf(stderr, "  Invalid input.\n");
-		/* Flush the rest of the line */
-		while (getchar() != '\n')
-			;
-		return;
-	}
-
-	fprintf(stderr, "  Angle (0-180): ");
-	if (scanf("%u", &angle) != 1) {
-		fprintf(stderr, "  Invalid input.\n");
-		while (getchar() != '\n')
-			;
-		return;
-	}
-
-	memset(&cmd, 0, sizeof(cmd));
-	cmd.command  = ECHO_CMD_MOVE;
-	cmd.servo_id = servo_id;
-	cmd.angle    = angle;
-
-	if (write(fd, &cmd, sizeof(cmd)) < 0)
-		perror("[controller] write(MOVE)");
-	else
-		fprintf(stderr, "[controller] Moved servo %u to %u degrees.\n",
-			servo_id, angle);
-}
-
-static void do_get_state(int fd)
-{
-	struct echo_snapshot st;
-
-	memset(&st, 0, sizeof(st));
-
-	if (ioctl(fd, ECHO_IOC_GET_STATE, &st) < 0) {
-		perror("[controller] ioctl(GET_STATE)");
-		return;
-	}
-
-	fprintf(stderr,
-		"  mode         : %u\n"
-		"  pan_angle    : %u\n"
-		"  tilt_angle   : %u\n"
-		"  buffer_count : %u\n"
-		"  total_moves  : %u\n"
-		"  total_replays: %u\n"
-		"  irq_count    : %u\n",
-		st.mode, st.pan_angle, st.tilt_angle,
-		st.buffer_count, st.total_moves,
-		st.total_replays, st.irq_count);
-}
-
-static void do_reset(int fd)
-{
-	if (ioctl(fd, ECHO_IOC_RESET) < 0)
-		perror("[controller] ioctl(RESET)");
-	else
-		fprintf(stderr, "[controller] Device reset.\n");
-}
-
-static void do_set_speed(int fd)
-{
-	unsigned int speed;
-	__u16 spd;
-
-	fprintf(stderr, "  Speed multiplier (1=normal): ");
-	if (scanf("%u", &speed) != 1) {
-		fprintf(stderr, "  Invalid input.\n");
-		while (getchar() != '\n')
-			;
-		return;
-	}
-
-	spd = (uint16_t)speed;
-	if (ioctl(fd, ECHO_IOC_SET_SPEED, &spd) < 0)
-		perror("[controller] ioctl(SET_SPEED)");
-	else
-		fprintf(stderr, "[controller] Speed set to %u.\n", speed);
-}
-
-/* ------------------------------------------------------------------ */
-
-void *echo_controller_run(void *arg)
-{
-	int fd = (int)(long)arg;
-	int ch;
-
-	while (running) {
-		print_menu();
-
-		ch = getchar();
-		if (ch == EOF)
-			break;
-
-		/* Consume trailing newline if present */
-		if (ch != '\n') {
-			int tmp = getchar();
-			(void)tmp;
-		}
-
-		switch (ch) {
-		case '1':
-			do_teach(fd);
-			break;
-		case '2':
-			do_replay(fd);
-			break;
-		case '3':
-			do_stop(fd);
-			break;
-		case '4':
-			do_move(fd);
-			break;
-		case '5':
-			do_get_state(fd);
-			break;
-		case '6':
-			do_reset(fd);
-			break;
-		case '7':
-			do_set_speed(fd);
-			break;
-		case 'q':
-		case 'Q':
-			fprintf(stderr, "[controller] Quit requested.\n");
-			running = 0;
-			break;
-		case '\n':
-			/* Ignore bare enter */
-			break;
-		default:
-			fprintf(stderr, "[controller] Unknown option '%c'\n", ch);
-			break;
-		}
-	}
-
+	replaying = 0;
 	return NULL;
+}
+
+int echo_controller_handle_key(int fd, int ch)
+{
+	struct echo_cmd cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+
+	switch (ch) {
+	case '1':
+	case 't':
+	case 'T':
+		cmd.command = ECHO_CMD_TEACH;
+		if (write(fd, &cmd, sizeof(cmd)) < 0)
+			snprintf(status_buf, sizeof(status_buf),
+				 "TEACH failed: %s", strerror(errno));
+		else
+			snprintf(status_buf, sizeof(status_buf),
+				 "Entered TEACH mode.");
+		break;
+
+	case '2':
+	case 'r':
+	case 'R':
+		if (replaying) {
+			snprintf(status_buf, sizeof(status_buf),
+				 "Replay already in progress...");
+			break;
+		}
+		replaying = 1;
+		snprintf(status_buf, sizeof(status_buf), "Replaying...");
+		pthread_create(&replay_tid, NULL, replay_worker,
+			       (void *)(long)fd);
+		pthread_detach(replay_tid);
+		break;
+
+	case '3':
+	case 's':
+	case 'S':
+		cmd.command = ECHO_CMD_STOP;
+		if (write(fd, &cmd, sizeof(cmd)) < 0)
+			snprintf(status_buf, sizeof(status_buf),
+				 "STOP failed: %s", strerror(errno));
+		else
+			snprintf(status_buf, sizeof(status_buf),
+				 "Stopped.");
+		break;
+
+	case '6':
+		if (ioctl(fd, ECHO_IOC_RESET) < 0)
+			snprintf(status_buf, sizeof(status_buf),
+				 "RESET failed: %s", strerror(errno));
+		else
+			snprintf(status_buf, sizeof(status_buf),
+				 "Device reset.");
+		break;
+
+	case 'q':
+	case 'Q':
+		running = 0;
+		return -1;
+
+	default:
+		/* Ignore unknown keys (including escape sequences) */
+		break;
+	}
+
+	return 0;
 }

@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -pthread
+CFLAGS = -Wall -Wextra
 LDFLAGS = -lncurses -lpthread
 
 TARGET = echo_app

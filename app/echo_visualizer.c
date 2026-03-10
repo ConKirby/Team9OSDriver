@@ -1,30 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * echo_visualizer.c - ncurses UI thread for Project Echo.
+ * echo_visualizer.c - ncurses rendering for Project Echo.
  *
- * Performs a blocking read() of the device state snapshot.  The kernel
- * driver wakes the wait queue whenever new data is available, so this
- * thread sleeps efficiently until there is something to display.
+ * Provides init/render/cleanup functions called from the main loop.
+ * All ncurses calls happen in the main thread.
  */
 
-#include <errno.h>
 #include <ncurses.h>
-#include <signal.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "../module/echo_ioctl.h"
 #include "echo_visualizer.h"
 
-/* Import the global shutdown flag from echo_app.c */
-extern volatile sig_atomic_t running;
-
-/* FIFO capacity — must match ECHO_FIFO_SIZE in echo_types.h */
 #define ECHO_FIFO_SIZE 256
-
-/* ------------------------------------------------------------------ */
 
 static const char *mode_name(uint32_t mode)
 {
@@ -36,10 +24,6 @@ static const char *mode_name(uint32_t mode)
 	}
 }
 
-/*
- * Build a simple horizontal bar.
- *   filled = number of '#' characters (0..bar_len)
- */
 static void format_bar(char *buf, size_t buf_sz, int filled, int bar_len)
 {
 	int i;
@@ -54,74 +38,59 @@ static void format_bar(char *buf, size_t buf_sz, int filled, int bar_len)
 		buf[1 + i] = (i < filled) ? '#' : '-';
 	buf[1 + bar_len] = ']';
 	buf[2 + bar_len] = '\0';
-	(void)buf_sz; /* silence unused warning */
+	(void)buf_sz;
 }
 
-/* ------------------------------------------------------------------ */
-
-void *echo_visualizer_run(void *arg)
+void echo_visualizer_init(void)
 {
-	int fd = (int)(long)arg;
-	struct echo_snapshot snap;
-	ssize_t n;
-	char pan_bar[32];
-	char tilt_bar[32];
-	int bar_len = 10;
-	int row;
-
-	/* Initialise ncurses */
 	initscr();
 	cbreak();
 	noecho();
 	curs_set(0);
-	nodelay(stdscr, FALSE);
+	nodelay(stdscr, TRUE);
+}
 
-	while (running) {
-		/* Blocking read — sleeps until the kernel signals new data */
-		n = read(fd, &snap, sizeof(snap));
+void echo_visualizer_render(const struct echo_snapshot *snap,
+			    const char *status_msg)
+{
+	char pan_bar[32];
+	char tilt_bar[32];
+	int bar_len = 18;
+	int row;
 
-		if (n < 0) {
-			if (errno == EINTR)
-				break;   /* interrupted by signal — time to exit */
-			/* Transient error — try again */
-			continue;
-		}
+	format_bar(pan_bar, sizeof(pan_bar),
+		   (snap->pan_angle * bar_len) / 180, bar_len);
+	format_bar(tilt_bar, sizeof(tilt_bar),
+		   (snap->tilt_angle * bar_len) / 180, bar_len);
 
-		if ((size_t)n < sizeof(snap))
-			continue;   /* short read — skip this frame */
+	erase();
 
-		/* Build progress bars (0-180 mapped to 0-bar_len) */
-		format_bar(pan_bar,  sizeof(pan_bar),
-			   (snap.pan_angle  * bar_len) / 180, bar_len);
-		format_bar(tilt_bar, sizeof(tilt_bar),
-			   (snap.tilt_angle * bar_len) / 180, bar_len);
+	row = 1;
+	mvprintw(row++, 2, "+------------------------------------+");
+	mvprintw(row++, 2, "|       PROJECT ECHO STATUS          |");
+	mvprintw(row++, 2, "+------------------------------------+");
+	mvprintw(row++, 2, "| Mode:    %-26s |", mode_name(snap->mode));
+	mvprintw(row++, 2, "| Pan:     %s %3u  |", pan_bar, snap->pan_angle);
+	mvprintw(row++, 2, "| Tilt:    %s %3u  |", tilt_bar, snap->tilt_angle);
+	mvprintw(row++, 2, "| Buffer:  %-3u / %-21d |", snap->buffer_count,
+		 ECHO_FIFO_SIZE);
+	mvprintw(row++, 2, "| Moves:   %-26u |", snap->total_moves);
+	mvprintw(row++, 2, "| Replays: %-26u |", snap->total_replays);
+	mvprintw(row++, 2, "| IRQs:    %-26u |", snap->irq_count);
+	mvprintw(row++, 2, "+------------------------------------+");
 
-		/* Render the dashboard */
-		erase();
+	row++;
+	mvprintw(row++, 2, "Controls:");
+	mvprintw(row++, 2, "  [1/t] Teach   [2/r] Replay   [3/s] Stop");
+	mvprintw(row++, 2, "  [6] Reset     [q] Quit");
 
-		row = 1;
-		mvprintw(row++, 2, "\xe2\x95\x94\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x97");
-		mvprintw(row++, 2, "\xe2\x95\x91       PROJECT ECHO STATUS         \xe2\x95\x91");
-		mvprintw(row++, 2, "\xe2\x95\xa0\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\xa3");
-		mvprintw(row++, 2, "\xe2\x95\x91 Mode:    %-26s\xe2\x95\x91", mode_name(snap.mode));
-		mvprintw(row++, 2, "\xe2\x95\x91 Pan:     %s %3u\xc2\xb0%*s\xe2\x95\x91",
-			 pan_bar, snap.pan_angle,
-			 (int)(24 - strlen(pan_bar) - 5), "");
-		mvprintw(row++, 2, "\xe2\x95\x91 Tilt:    %s %3u\xc2\xb0%*s\xe2\x95\x91",
-			 tilt_bar, snap.tilt_angle,
-			 (int)(24 - strlen(tilt_bar) - 5), "");
-		mvprintw(row++, 2, "\xe2\x95\x91 Buffer:  %-3u / %-21d\xe2\x95\x91",
-			 snap.buffer_count, ECHO_FIFO_SIZE);
-		mvprintw(row++, 2, "\xe2\x95\x91 Moves:   %-26u\xe2\x95\x91", snap.total_moves);
-		mvprintw(row++, 2, "\xe2\x95\x91 Replays: %-26u\xe2\x95\x91", snap.total_replays);
-		mvprintw(row++, 2, "\xe2\x95\x91 IRQs:    %-26u\xe2\x95\x91", snap.irq_count);
-		mvprintw(row++, 2, "\xe2\x95\x9a\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90\xe2\x95\x9d");
+	row++;
+	mvprintw(row++, 2, "Status: %s", status_msg ? status_msg : "");
 
-		mvprintw(row + 1, 2, "Press Ctrl-C to quit.");
+	refresh();
+}
 
-		refresh();
-	}
-
+void echo_visualizer_cleanup(void)
+{
 	endwin();
-	return NULL;
 }
