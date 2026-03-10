@@ -26,12 +26,11 @@
 #define ECHO_SERVO_MAX		180
 
 /* ── GPIO / joystick constants ─────────────────────────────────────── */
-#define ECHO_NUM_GPIO		5
+#define ECHO_NUM_GPIO		4
 #define ECHO_GPIO_UP		0
 #define ECHO_GPIO_DOWN		1
 #define ECHO_GPIO_LEFT		2
 #define ECHO_GPIO_RIGHT		3
-#define ECHO_GPIO_BUTTON	4
 
 /* ── Timing and step constants ─────────────────────────────────────── */
 #define ECHO_DEFAULT_TIMEOUT_MS		5000

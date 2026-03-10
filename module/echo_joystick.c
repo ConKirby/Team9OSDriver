@@ -2,8 +2,9 @@
 /*
  * echo_joystick.c — GPIO joystick input with threaded IRQ handlers
  *
- * Reads a 5-way joystick via GPIO interrupts and fires ops callbacks
- * for direction presses and button presses.
+ * Reads a 4-way joystick (common pin to GND, direction pins with
+ * internal pull-ups, active-low) via GPIO interrupts and fires ops
+ * callbacks for direction presses.
  *
  * Dependencies: echo_joystick_ops callbacks only (wired by echo_main.c).
  */
@@ -38,7 +39,6 @@ static const char * const gpio_names[ECHO_NUM_GPIO] = {
 	"echo_joy_down",
 	"echo_joy_left",
 	"echo_joy_right",
-	"echo_joy_button",
 };
 
 /* ── IRQ handlers ──────────────────────────────────────────────────── */
@@ -89,9 +89,6 @@ static irqreturn_t joystick_thread_fn(int irq, void *data)
 	case ECHO_GPIO_RIGHT:
 		ctx->ops->on_direction(ctx->ops_data,
 				       ECHO_SERVO_PAN, +ECHO_ANGLE_STEP);
-		break;
-	case ECHO_GPIO_BUTTON:
-		ctx->ops->on_button(ctx->ops_data);
 		break;
 	default:
 		break;

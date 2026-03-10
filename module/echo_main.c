@@ -9,7 +9,6 @@
  * Dependency wiring (all in this file):
  *
  *   joystick --[joy_ops]--> joy_op_direction --> echo_state_handle_input
- *                           joy_op_button    --> echo_state_set_mode / stop
  *
  *   state  --[state_ops]--> state_op_move_servo  --> echo_servo_set_angle
  *                           state_op_get_servo   --> echo_servo_get_angle
@@ -46,19 +45,15 @@ static int gpio_up     = 17;
 static int gpio_down   = 27;
 static int gpio_left   = 22;
 static int gpio_right  = 23;
-static int gpio_button = 24;
-
 module_param(gpio_up,     int, 0444);
 module_param(gpio_down,   int, 0444);
 module_param(gpio_left,   int, 0444);
 module_param(gpio_right,  int, 0444);
-module_param(gpio_button, int, 0444);
 
 MODULE_PARM_DESC(gpio_up,     "GPIO pin for UP direction");
 MODULE_PARM_DESC(gpio_down,   "GPIO pin for DOWN direction");
 MODULE_PARM_DESC(gpio_left,   "GPIO pin for LEFT direction");
 MODULE_PARM_DESC(gpio_right,  "GPIO pin for RIGHT direction");
-MODULE_PARM_DESC(gpio_button, "GPIO pin for BUTTON input");
 
 static unsigned long timeout_ms = ECHO_DEFAULT_TIMEOUT_MS;
 module_param(timeout_ms, ulong, 0644);
@@ -190,20 +185,8 @@ static void joy_op_direction(void *data, u8 servo_id, int delta)
 	echo_state_handle_input(dev->state, servo_id, delta);
 }
 
-static void joy_op_button(void *data)
-{
-	struct echo_device *dev = data;
-	enum echo_mode mode = echo_state_get_mode(dev->state);
-
-	if (mode == ECHO_MODE_IDLE || mode == ECHO_MODE_TEACH)
-		echo_state_set_mode(dev->state, ECHO_MODE_TEACH);
-	else if (mode == ECHO_MODE_REPLAY)
-		echo_state_stop(dev->state);
-}
-
 static const struct echo_joystick_ops joy_ops = {
 	.on_direction = joy_op_direction,
-	.on_button    = joy_op_button,
 };
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -251,7 +234,6 @@ static int __init echo_init(void)
 	gpio_pins[ECHO_GPIO_DOWN]   = gpio_down;
 	gpio_pins[ECHO_GPIO_LEFT]   = gpio_left;
 	gpio_pins[ECHO_GPIO_RIGHT]  = gpio_right;
-	gpio_pins[ECHO_GPIO_BUTTON] = gpio_button;
 
 	echo_dev->joystick = echo_joystick_create(gpio_pins, sim_mode,
 						  &joy_ops, echo_dev);

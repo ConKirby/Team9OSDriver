@@ -17,7 +17,6 @@ struct echo_joystick_ctx;
 /* Callbacks the joystick fires on physical input */
 struct echo_joystick_ops {
 	void (*on_direction)(void *data, u8 servo_id, int delta);
-	void (*on_button)(void *data);
 };
 
 struct echo_joystick_ctx *echo_joystick_create(
