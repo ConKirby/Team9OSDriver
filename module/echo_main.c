@@ -41,10 +41,10 @@
 
 /* ── Module parameters ─────────────────────────────────────────────── */
 
-static int gpio_up     = 17;
-static int gpio_down   = 27;
-static int gpio_left   = 22;
-static int gpio_right  = 23;
+static int gpio_up     = 529;  /* BCM 17 + 512 offset on Pi 4 */
+static int gpio_down   = 539;  /* BCM 27 + 512 offset on Pi 4 */
+static int gpio_left   = 534;  /* BCM 22 + 512 offset on Pi 4 */
+static int gpio_right  = 535;  /* BCM 23 + 512 offset on Pi 4 */
 module_param(gpio_up,     int, 0444);
 module_param(gpio_down,   int, 0444);
 module_param(gpio_left,   int, 0444);
