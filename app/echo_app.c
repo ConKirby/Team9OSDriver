@@ -49,8 +49,8 @@ int main(void)
 		return EXIT_FAILURE;
 	}
 
-	/* Open the device */
-	fd = open(DEVICE_PATH, O_RDWR);
+	/* Open the device (non-blocking so poll/getch loop works) */
+	fd = open(DEVICE_PATH, O_RDWR | O_NONBLOCK);
 	if (fd < 0) {
 		perror("open " DEVICE_PATH);
 		return EXIT_FAILURE;
