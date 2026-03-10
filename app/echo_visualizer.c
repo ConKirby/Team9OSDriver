@@ -55,6 +55,7 @@ void echo_visualizer_render(const struct echo_snapshot *snap,
 {
 	char pan_bar[32];
 	char tilt_bar[32];
+	char tilt2_bar[32];
 	int bar_len = 18;
 	int row;
 
@@ -62,6 +63,8 @@ void echo_visualizer_render(const struct echo_snapshot *snap,
 		   (snap->pan_angle * bar_len) / 180, bar_len);
 	format_bar(tilt_bar, sizeof(tilt_bar),
 		   (snap->tilt_angle * bar_len) / 180, bar_len);
+	format_bar(tilt2_bar, sizeof(tilt2_bar),
+		   (snap->tilt2_angle * bar_len) / 180, bar_len);
 
 	erase();
 
@@ -72,6 +75,7 @@ void echo_visualizer_render(const struct echo_snapshot *snap,
 	mvprintw(row++, 2, "| Mode:    %-26s |", mode_name(snap->mode));
 	mvprintw(row++, 2, "| Pan:     %s %3u  |", pan_bar, snap->pan_angle);
 	mvprintw(row++, 2, "| Tilt:    %s %3u  |", tilt_bar, snap->tilt_angle);
+	mvprintw(row++, 2, "| Tilt2:   %s %3u  |", tilt2_bar, snap->tilt2_angle);
 	mvprintw(row++, 2, "| Buffer:  %-3u / %-21d |", snap->buffer_count,
 		 ECHO_FIFO_SIZE);
 	mvprintw(row++, 2, "| Moves:   %-26u |", snap->total_moves);

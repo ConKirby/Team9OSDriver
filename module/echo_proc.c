@@ -33,7 +33,7 @@ static int echo_proc_show(struct seq_file *m, void *v)
 	struct echo_device *dev = m->private;
 	enum echo_mode cur_mode;
 	const char *mode_str;
-	u16 pan, tilt;
+	u16 pan, tilt, tilt2;
 	unsigned int buf_count;
 	int total_moves, total_replays, irq_count, open_cnt;
 
@@ -44,8 +44,9 @@ static int echo_proc_show(struct seq_file *m, void *v)
 	default:               mode_str = "IDLE";   break;
 	}
 
-	pan  = echo_servo_get_angle(dev->servo, ECHO_SERVO_PAN);
-	tilt = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT);
+	pan   = echo_servo_get_angle(dev->servo, ECHO_SERVO_PAN);
+	tilt  = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT);
+	tilt2 = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT2);
 	buf_count     = echo_buffer_count(dev->buffer);
 	total_moves   = echo_state_get_total_moves(dev->state);
 	total_replays = echo_buffer_get_replay_count(dev->buffer);
@@ -56,6 +57,7 @@ static int echo_proc_show(struct seq_file *m, void *v)
 	seq_printf(m, "Mode:           %s\n", mode_str);
 	seq_printf(m, "Pan Angle:      %u\n", pan);
 	seq_printf(m, "Tilt Angle:     %u\n", tilt);
+	seq_printf(m, "Tilt2 Angle:    %u\n", tilt2);
 	seq_printf(m, "Buffer Used:    %u / %u\n", buf_count, ECHO_FIFO_SIZE);
 	seq_printf(m, "Total Moves:    %d\n", total_moves);
 	seq_printf(m, "Total Replays:  %d\n", total_replays);

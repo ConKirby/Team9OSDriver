@@ -18,9 +18,10 @@
 #define ECHO_FIFO_SIZE		256	/* must be power of 2 for kfifo */
 
 /* ── Servo constants ───────────────────────────────────────────────── */
-#define ECHO_NUM_SERVOS		2
-#define ECHO_SERVO_PAN		0
-#define ECHO_SERVO_TILT		1
+#define ECHO_NUM_SERVOS		3
+#define ECHO_SERVO_PAN		0	/* base rotation — channel 0 */
+#define ECHO_SERVO_TILT		1	/* first arm     — channel 1 */
+#define ECHO_SERVO_TILT2	2	/* second arm    — channel 2 */
 #define ECHO_SERVO_CENTER	90
 #define ECHO_SERVO_MIN		0
 #define ECHO_SERVO_MAX		180
@@ -47,7 +48,7 @@ enum echo_mode {
 
 /* ── A single recorded servo movement ──────────────────────────────── */
 struct echo_move {
-	u8  servo_id;	/* ECHO_SERVO_PAN or ECHO_SERVO_TILT */
+	u8  servo_id;	/* ECHO_SERVO_PAN, ECHO_SERVO_TILT, or ECHO_SERVO_TILT2 */
 	u16 angle;	/* 0–180 degrees */
 	u32 delay_ms;	/* time since previous move */
 };

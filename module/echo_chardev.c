@@ -44,6 +44,7 @@ static void build_snapshot(struct echo_device *dev, struct echo_snapshot *snap)
 	snap->mode          = (u32)echo_state_get_mode(dev->state);
 	snap->pan_angle     = echo_servo_get_angle(dev->servo, ECHO_SERVO_PAN);
 	snap->tilt_angle    = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT);
+	snap->tilt2_angle   = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT2);
 	snap->buffer_count  = echo_buffer_count(dev->buffer);
 	snap->total_moves   = (u32)echo_state_get_total_moves(dev->state);
 	snap->total_replays = (u32)echo_buffer_get_replay_count(dev->buffer);
@@ -189,6 +190,8 @@ static long echo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		echo_servo_set_angle(dev->servo, ECHO_SERVO_PAN,
 				     ECHO_SERVO_CENTER);
 		echo_servo_set_angle(dev->servo, ECHO_SERVO_TILT,
+				     ECHO_SERVO_CENTER);
+		echo_servo_set_angle(dev->servo, ECHO_SERVO_TILT2,
 				     ECHO_SERVO_CENTER);
 		notify_readers(dev);
 		return 0;

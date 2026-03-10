@@ -40,6 +40,7 @@ struct echo_snapshot {
 	__u32 mode;
 	__u16 pan_angle;
 	__u16 tilt_angle;
+	__u16 tilt2_angle;
 	__u32 buffer_count;
 	__u32 total_moves;
 	__u32 total_replays;

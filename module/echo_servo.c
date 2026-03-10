@@ -2,7 +2,7 @@
 /*
  * echo_servo.c — I2C + PCA9685 hardware abstraction (leaf subsystem)
  *
- * Drives two servos (pan/tilt) via a PCA9685 16-channel PWM controller
+ * Drives three servos (base/tilt/tilt2) via a PCA9685 16-channel PWM controller
  * on I2C bus 1.  In simulation mode all I2C traffic is skipped.
  *
  * Dependencies: NONE — this is a leaf subsystem.
@@ -118,8 +118,9 @@ struct echo_servo_ctx *echo_servo_create(bool sim_mode)
 
 	mutex_init(&ctx->lock);
 	ctx->sim_mode = sim_mode;
-	ctx->pos[ECHO_SERVO_PAN]  = ECHO_SERVO_CENTER;
-	ctx->pos[ECHO_SERVO_TILT] = ECHO_SERVO_CENTER;
+	ctx->pos[ECHO_SERVO_PAN]   = ECHO_SERVO_CENTER;
+	ctx->pos[ECHO_SERVO_TILT]  = ECHO_SERVO_CENTER;
+	ctx->pos[ECHO_SERVO_TILT2] = ECHO_SERVO_CENTER;
 
 	if (sim_mode) {
 		pr_info("echo: servo: simulation mode\n");
@@ -155,10 +156,12 @@ struct echo_servo_ctx *echo_servo_create(bool sim_mode)
 		return ERR_PTR(ret);
 	}
 
-	/* Centre both servos */
+	/* Centre all servos */
 	pca9685_set_pwm(client, ECHO_SERVO_PAN,  0,
 			angle_to_pwm(ECHO_SERVO_CENTER));
 	pca9685_set_pwm(client, ECHO_SERVO_TILT, 0,
+			angle_to_pwm(ECHO_SERVO_CENTER));
+	pca9685_set_pwm(client, ECHO_SERVO_TILT2, 0,
 			angle_to_pwm(ECHO_SERVO_CENTER));
 
 	pr_info("echo: servo: PCA9685 initialised on I2C bus 1\n");
@@ -172,8 +175,9 @@ void echo_servo_destroy(struct echo_servo_ctx *ctx)
 
 	if (!ctx->sim_mode) {
 		if (ctx->client) {
-			pca9685_set_pwm(ctx->client, ECHO_SERVO_PAN,  0, 0);
-			pca9685_set_pwm(ctx->client, ECHO_SERVO_TILT, 0, 0);
+			pca9685_set_pwm(ctx->client, ECHO_SERVO_PAN,   0, 0);
+			pca9685_set_pwm(ctx->client, ECHO_SERVO_TILT,  0, 0);
+			pca9685_set_pwm(ctx->client, ECHO_SERVO_TILT2, 0, 0);
 			i2c_unregister_device(ctx->client);
 		}
 		if (ctx->adapter)
@@ -196,14 +200,27 @@ int echo_servo_set_angle(struct echo_servo_ctx *ctx, u8 servo_id, u16 angle)
 	mutex_lock(&ctx->lock);
 	ctx->pos[servo_id] = angle;
 
+	/* Tilt2 mirrors the base — keep them in sync */
+	if (servo_id == ECHO_SERVO_PAN)
+		ctx->pos[ECHO_SERVO_TILT2] = angle;
+
 	if (ctx->sim_mode) {
 		pr_info("echo: servo[%d] = %u (sim)\n", servo_id, angle);
+		if (servo_id == ECHO_SERVO_PAN)
+			pr_info("echo: servo[%d] = %u (sim, mirror)\n",
+				ECHO_SERVO_TILT2, angle);
 		mutex_unlock(&ctx->lock);
 		return 0;
 	}
 
 	pwm_ticks = angle_to_pwm(angle);
 	ret = pca9685_set_pwm(ctx->client, servo_id, 0, pwm_ticks);
+
+	/* Drive tilt2 to match pan */
+	if (servo_id == ECHO_SERVO_PAN && ret == 0)
+		ret = pca9685_set_pwm(ctx->client, ECHO_SERVO_TILT2, 0,
+				      pwm_ticks);
+
 	mutex_unlock(&ctx->lock);
 	return ret;
 }
