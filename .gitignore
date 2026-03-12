@@ -1,0 +1,29 @@
+# Kernel module build artifacts
+module/*.o
+module/*.ko
+module/*.mod
+module/*.mod.c
+module/*.mod.o
+module/.*.cmd
+module/.tmp_versions/
+module/Module.symvers
+module/modules.order
+module/.cache.mk
+
+# User-space app build artifacts
+app/*.o
+app/echo_app
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
