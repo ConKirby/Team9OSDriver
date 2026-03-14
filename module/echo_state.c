@@ -14,6 +14,7 @@
 #include <linux/printk.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/seqlock.h>
 #include <linux/timer.h>
 
 #include "echo_types.h"
@@ -28,6 +29,7 @@ struct echo_state_ctx {
 	unsigned long     timeout_ms;
 
 	ktime_t last_move_time;
+	seqlock_t time_lock;		/* protects last_move_time */
 
 	const struct echo_state_ops *ops;
 	void *ops_data;
@@ -76,6 +78,7 @@ struct echo_state_ctx *echo_state_create(unsigned long timeout_ms,
 	ctx->ops_data   = ops_data;
 
 	spin_lock_init(&ctx->mode_lock);
+	seqlock_init(&ctx->time_lock);
 	timer_setup(&ctx->inactivity_timer, inactivity_timer_fn, 0);
 	atomic_set(&ctx->total_moves, 0);
 
@@ -136,8 +139,11 @@ void echo_state_handle_input(struct echo_state_ctx *ctx,
 	now = ktime_get();
 	move.servo_id = servo_id;
 	move.angle    = new_angle;
+
+	write_seqlock(&ctx->time_lock);
 	move.delay_ms = (u32)ktime_ms_delta(now, ctx->last_move_time);
 	ctx->last_move_time = now;
+	write_sequnlock(&ctx->time_lock);
 
 	ctx->ops->record_move(ctx->ops_data, &move);
 	atomic_inc(&ctx->total_moves);
