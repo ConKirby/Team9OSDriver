@@ -42,7 +42,7 @@ struct echo_state_ctx {
 static void inactivity_timer_fn(struct timer_list *t)
 {
 	struct echo_state_ctx *ctx =
-		from_timer(ctx, t, inactivity_timer);
+		timer_container_of(ctx, t, inactivity_timer);
 	unsigned long flags;
 
 	spin_lock_irqsave(&ctx->mode_lock, flags);
@@ -91,7 +91,7 @@ void echo_state_destroy(struct echo_state_ctx *ctx)
 {
 	if (!ctx)
 		return;
-	del_timer_sync(&ctx->inactivity_timer);
+	timer_delete_sync(&ctx->inactivity_timer);
 	kfree(ctx);
 }
 
@@ -172,7 +172,7 @@ int echo_state_start_replay(struct echo_state_ctx *ctx)
 	ctx->mode = ECHO_MODE_REPLAY;
 	spin_unlock_irqrestore(&ctx->mode_lock, flags);
 
-	del_timer_sync(&ctx->inactivity_timer);
+	timer_delete_sync(&ctx->inactivity_timer);
 
 	ctx->ops->start_replay(ctx->ops_data);
 	ctx->ops->notify(ctx->ops_data);
@@ -190,7 +190,7 @@ void echo_state_stop(struct echo_state_ctx *ctx)
 	ctx->mode = ECHO_MODE_IDLE;
 	spin_unlock_irqrestore(&ctx->mode_lock, flags);
 
-	del_timer_sync(&ctx->inactivity_timer);
+	timer_delete_sync(&ctx->inactivity_timer);
 	ctx->ops->cancel_replay(ctx->ops_data);
 	ctx->ops->notify(ctx->ops_data);
 }
