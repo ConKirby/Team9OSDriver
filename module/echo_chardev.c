@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * echo_chardev.c — Character device file_operations for /dev/echo_robot
- *
- * The chardev is the user-space gateway.  It holds a back-pointer to
- * echo_device and calls all subsystem APIs through it.
- *
- * Dependencies: echo_device (echo_main.h) → all subsystem public APIs.
- */
+// echo_chardev.c — Character device file_operations for /dev/echo_robot
+
+// The chardev is the user-space gateway.  It holds a back-pointer to
+// echo_device and calls all subsystem APIs through it.
+
+// Dependencies: echo_device (echo_main.h) → all subsystem public APIs.
+
 
 #include <linux/cdev.h>
 #include <linux/device.h>
@@ -24,21 +23,26 @@
 #include "echo_buffer.h"
 #include "echo_joystick.h"
 
-/* ── Private context ───────────────────────────────────────────────── */
+// Private context
 struct echo_chardev_ctx {
-	struct cdev    cdev;
-	dev_t          devno;
+	 // The kernel character device object
+	struct cdev cdev;
+	// Major:minor device number (e.g., 234:0)
+	dev_t  devno;
+	// Device class for /sys/class/ and udev
 	struct class  *dev_class;
+	// /dev node
 	struct device *device;
 
-	int            open_count;
-	struct mutex   open_lock;
+	int open_count;
+	// open count mutex
+	struct mutex open_lock;
 
-	struct echo_device *dev;	/* back-pointer to coordinator */
+	// Back-pointer to the coordinator struct
+	struct echo_device *dev;
 };
 
-/* ── Helper: build a snapshot from all subsystems ──────────────────── */
-
+// Gathers states from all susbsytems and puts them in one struct
 static void build_snapshot(struct echo_device *dev, struct echo_snapshot *snap)
 {
 	snap->mode          = (u32)echo_state_get_mode(dev->state);
@@ -51,23 +55,24 @@ static void build_snapshot(struct echo_device *dev, struct echo_snapshot *snap)
 	snap->irq_count     = (u32)echo_joystick_get_irq_count(dev->joystick);
 }
 
-/* ── Helper: set new_data_avail + wake readers ─────────────────────── */
-
+// Guarantees a single store instruction
+// Prevents the compiler from optimising away or reordering the write
 static void notify_readers(struct echo_device *dev)
 {
 	WRITE_ONCE(dev->new_data_avail, true);
 	wake_up_interruptible(&dev->wq_read);
 }
 
-/* ── file_operations callbacks ─────────────────────────────────────── */
-
+// file_operations callbacks 
 static int echo_open(struct inode *inode, struct file *filp)
 {
-	struct echo_chardev_ctx *ctx =
-		container_of(inode->i_cdev, struct echo_chardev_ctx, cdev);
+	// Get pointer of struct that contains memeber
+	struct echo_chardev_ctx *ctx = container_of(inode->i_cdev, struct echo_chardev_ctx, cdev);
 
+	// store context (read, write etc.) in the private file
 	filp->private_data = ctx;
 
+	// Make sure the incrementing of the int is atomic
 	mutex_lock(&ctx->open_lock);
 	ctx->open_count++;
 	mutex_unlock(&ctx->open_lock);
@@ -76,10 +81,11 @@ static int echo_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+// On fd close
 static int echo_release(struct inode *inode, struct file *filp)
 {
 	struct echo_chardev_ctx *ctx = filp->private_data;
-
+	// Make sure the decrementing of the int is atomic
 	mutex_lock(&ctx->open_lock);
 	ctx->open_count--;
 	mutex_unlock(&ctx->open_lock);
@@ -88,45 +94,50 @@ static int echo_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static ssize_t echo_read(struct file *filp, char __user *buf,
-			  size_t count, loff_t *ppos)
+static ssize_t echo_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)
 {
 	struct echo_chardev_ctx *ctx = filp->private_data;
 	struct echo_device *dev = ctx->dev;
+	// snapshot 
 	struct echo_snapshot snap;
 	size_t to_copy;
 
-	/* Non-blocking check */
+	// Non-blocking check
 	if ((filp->f_flags & O_NONBLOCK) && !READ_ONCE(dev->new_data_avail))
 		return -EAGAIN;
 
-	/* Block until new data is available */
-	if (wait_event_interruptible(dev->wq_read,
-				     READ_ONCE(dev->new_data_avail)))
+	// Block until new data is available
+	if (wait_event_interruptible(dev->wq_read, READ_ONCE(dev->new_data_avail)))
+	// signal interrupted this syscall
 		return -ERESTARTSYS;
 
+		// block again until new data arrives
 	WRITE_ONCE(dev->new_data_avail, false);
 
 	build_snapshot(dev, &snap);
 
+	// safe write to userspace
 	to_copy = min(count, sizeof(snap));
 	if (copy_to_user(buf, &snap, to_copy))
+	// bad address
 		return -EFAULT;
 
+		// return the number of bytes copied
 	return (ssize_t)to_copy;
 }
 
-static ssize_t echo_write(struct file *filp, const char __user *buf,
-			   size_t count, loff_t *ppos)
+static ssize_t echo_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos)
 {
 	struct echo_chardev_ctx *ctx = filp->private_data;
 	struct echo_device *dev = ctx->dev;
 	struct echo_cmd cmd;
 	int ret;
 
+	//If userspace sends fewer bytes than size of echo_cmd, struct owuld be incomplete
 	if (count < sizeof(struct echo_cmd))
+	// reutrn invalid argument error
 		return -EINVAL;
-
+	// Safe copy from userspace to kernel. Reverse of copy_to_user().
 	if (copy_from_user(&cmd, buf, sizeof(cmd)))
 		return -EFAULT;
 
@@ -140,9 +151,9 @@ static ssize_t echo_write(struct file *filp, const char __user *buf,
 		ret = echo_state_start_replay(dev->state);
 		if (ret)
 			return ret;
-		/* Blocking write — sleep until replay completes */
-		if (wait_event_interruptible(dev->wq_replay_done,
-					     READ_ONCE(dev->replay_finished)))
+		// Blocking write, sleep until replay completes
+		// satisfies brief "write should block"
+		if (wait_event_interruptible(dev->wq_replay_done, READ_ONCE(dev->replay_finished)))
 			return -ERESTARTSYS;
 		break;
 
@@ -151,11 +162,11 @@ static ssize_t echo_write(struct file *filp, const char __user *buf,
 		break;
 
 	case ECHO_CMD_MOVE:
-		ret = echo_servo_set_angle(dev->servo,
-					   (u8)cmd.servo_id,
-					   (u16)cmd.angle);
-		if (ret)
+		ret = echo_servo_set_angle(dev->servo, (u8)cmd.servo_id, (u16)cmd.angle);
+		if (ret){
 			return ret;
+		}
+		// any process blocked in read wakes up
 		notify_readers(dev);
 		break;
 
@@ -163,9 +174,11 @@ static ssize_t echo_write(struct file *filp, const char __user *buf,
 		return -EINVAL;
 	}
 
+	// return the number of bytes consumed
 	return (ssize_t)count;
 }
 
+// a negative number makes no sense here
 static long echo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct echo_chardev_ctx *ctx = filp->private_data;
@@ -178,6 +191,7 @@ static long echo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		if (copy_from_user(&speed, uarg, sizeof(speed)))
 			return -EFAULT;
+		// division by zero protection
 		if (speed == 0)
 			return -EINVAL;
 		echo_buffer_set_replay_speed(dev->buffer, speed);
@@ -187,20 +201,22 @@ static long echo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case ECHO_IOC_RESET:
 		echo_state_stop(dev->state);
 		echo_buffer_clear(dev->buffer);
-		echo_servo_set_angle(dev->servo, ECHO_SERVO_PAN,
-				     ECHO_SERVO_CENTER);
-		echo_servo_set_angle(dev->servo, ECHO_SERVO_TILT,
-				     ECHO_SERVO_CENTER);
-		echo_servo_set_angle(dev->servo, ECHO_SERVO_TILT2,
-				     ECHO_SERVO_CENTER);
+
+		// REset each of the 3 arms
+		echo_servo_set_angle(dev->servo, ECHO_SERVO_PAN, ECHO_SERVO_CENTER);
+		echo_servo_set_angle(dev->servo, ECHO_SERVO_TILT, ECHO_SERVO_CENTER);
+		echo_servo_set_angle(dev->servo, ECHO_SERVO_TILT2, ECHO_SERVO_CENTER);
 		notify_readers(dev);
 		return 0;
 
+		// non-blocking snapshot
 	case ECHO_IOC_GET_STATE: {
 		struct echo_snapshot snap;
 
 		build_snapshot(dev, &snap);
+		// copy size of snap from kernel memory to userspace memory
 		if (copy_to_user(uarg, &snap, sizeof(snap)))
+			// if this fails return a bad address error
 			return -EFAULT;
 		return 0;
 	}
@@ -210,19 +226,23 @@ static long echo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		if (copy_from_user(&new_mode, uarg, sizeof(new_mode)))
 			return -EFAULT;
+		// valid modes are 0 (IDLE), 1 (TEACH), 2 (REPLAY)
+		// as new_mode is unsigned, it can't be negative
 		if (new_mode > ECHO_MODE_REPLAY)
+		// invalid arg if bad
 			return -EINVAL;
-		return echo_state_set_mode(dev->state,
-					   (enum echo_mode)new_mode);
+		// returns the value straight back
+		// enum makes sure that that the kernel should only take mode values
+		return echo_state_set_mode(dev->state, (enum echo_mode)new_mode);
 	}
 
 	default:
+	// invalid ioctl for this device
 		return -ENOTTY;
 	}
 }
 
-/* ── file_operations table ─────────────────────────────────────────── */
-
+// file operations table
 static const struct file_operations echo_fops = {
 	.owner          = THIS_MODULE,
 	.open           = echo_open,
@@ -232,57 +252,68 @@ static const struct file_operations echo_fops = {
 	.unlocked_ioctl = echo_ioctl,
 };
 
-/* ── Public API ────────────────────────────────────────────────────── */
+//Public API
 
 struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 {
 	struct echo_chardev_ctx *ctx;
 	int ret;
 
+	// kernel equivalent to calloc
 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
+	// Null check
+	if (!ctx){
 		return ERR_PTR(-ENOMEM);
-
+	}
+	
 	mutex_init(&ctx->open_lock);
 	ctx->dev = dev;
 
-	/* 1. Allocate a dynamic major + minor */
+	// Allocate a dynamic major + minor
+	// alloc is dynamic where as register_ is static
+	// need dynamic as it allows the kernel to pick an unused one
 	ret = alloc_chrdev_region(&ctx->devno, 0, 1, ECHO_DEVICE_NAME);
 	if (ret < 0) {
 		pr_err("echo: chardev: alloc_chrdev_region failed (%d)\n", ret);
 		goto fail_alloc;
 	}
 
-	/* 2. Initialise and add the cdev */
+	// Initialise and add to file ops table
 	cdev_init(&ctx->cdev, &echo_fops);
+	// sets module ownership and prevents the module from being unloaded
 	ctx->cdev.owner = THIS_MODULE;
+	// registers device witht eh kernel
 	ret = cdev_add(&ctx->cdev, ctx->devno, 1);
 	if (ret < 0) {
 		pr_err("echo: chardev: cdev_add failed (%d)\n", ret);
+		// using goto in kernel cleanup due to fall through
+		// avoid duplicate line writes
 		goto fail_cdev;
 	}
 
-	/* 3. Create device class */
+	// Create device class echo
 	ctx->dev_class = class_create(ECHO_CLASS_NAME);
+	// checks if the returned pointer is an encoded error or not
 	if (IS_ERR(ctx->dev_class)) {
 		ret = PTR_ERR(ctx->dev_class);
 		pr_err("echo: chardev: class_create failed (%d)\n", ret);
 		goto fail_class;
 	}
 
-	/* 4. Create the /dev node */
-	ctx->device = device_create(ctx->dev_class, NULL, ctx->devno,
-				    NULL, ECHO_DEVICE_NAME);
+	// Create the /dev node
+	ctx->device = device_create(ctx->dev_class, NULL, ctx->devno, NULL, ECHO_DEVICE_NAME);
 	if (IS_ERR(ctx->device)) {
 		ret = PTR_ERR(ctx->device);
 		pr_err("echo: chardev: device_create failed (%d)\n", ret);
 		goto fail_device;
 	}
 
-	pr_info("echo: chardev: registered (%d:%d)\n",
-		MAJOR(ctx->devno), MINOR(ctx->devno));
+	// if none of the 4 fail, then the char device is registered
+	// retrun the major and minor device number
+	pr_info("echo: chardev: registered (%d:%d)\n", MAJOR(ctx->devno), MINOR(ctx->devno));
 	return ctx;
 
+	// Kernel clean up fall through 
 fail_device:
 	class_destroy(ctx->dev_class);
 fail_class:
@@ -291,9 +322,11 @@ fail_cdev:
 	unregister_chrdev_region(ctx->devno, 1);
 fail_alloc:
 	kfree(ctx);
+	// converts a negative error code to a pointer value
 	return ERR_PTR(ret);
 }
 
+// reverse order of creation
 void echo_chardev_destroy(struct echo_chardev_ctx *ctx)
 {
 	if (!ctx)
@@ -311,6 +344,7 @@ int echo_chardev_get_open_count(struct echo_chardev_ctx *ctx)
 {
 	int count;
 
+	// atomic count read
 	mutex_lock(&ctx->open_lock);
 	count = ctx->open_count;
 	mutex_unlock(&ctx->open_lock);
