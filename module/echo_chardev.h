@@ -1,10 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/*
- * echo_chardev.h — Character device subsystem (/dev/echo_robot)
- *
- * The chardev is the user-space gateway. It holds a back-pointer to
- * echo_device and calls all subsystem APIs through it.
- */
+
+
+// echo_chardev.h — Character device subsystem (/dev/echo_robot)
+// The chardev is the user-space gateway. It holds a back-pointer to
+// echo_device and calls all subsystem APIs through it.
+
 #ifndef ECHO_CHARDEV_H
 #define ECHO_CHARDEV_H
 
