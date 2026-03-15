@@ -27,3 +27,6 @@ app/echo_app
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Personal Docs
+Personal_Docs/
