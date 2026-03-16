@@ -24,6 +24,7 @@ struct echo_joystick_ctx {
 	int gpio_pins[ECHO_NUM_GPIO];
 	int irqs[ECHO_NUM_GPIO];
 	unsigned long last_irq_jiffies[ECHO_NUM_GPIO];
+	spinlock_t irq_lock;  /* protects last_irq_jiffies */
 	bool sim_mode;
 
 	const struct echo_joystick_ops *ops;
@@ -65,11 +66,14 @@ static irqreturn_t joystick_thread_fn(int irq, void *data)
 		return IRQ_HANDLED;
 
 	/* Debounce */
+	spin_lock(&ctx->irq_lock);
 	if (jiffies - ctx->last_irq_jiffies[pin_idx] <
 	    msecs_to_jiffies(ECHO_DEBOUNCE_MS))
+		spin_unlock(&ctx->irq_lock);
 		return IRQ_HANDLED;
 
 	ctx->last_irq_jiffies[pin_idx] = jiffies;
+	spin_unlock(&ctx->irq_lock);
 	atomic_inc(&ctx->irq_count);
 
 	/* Map pin to callback */
@@ -116,6 +120,7 @@ struct echo_joystick_ctx *echo_joystick_create(
 	ctx->ops      = ops;
 	ctx->ops_data = ops_data;
 	atomic_set(&ctx->irq_count, 0);
+	spin_lock_init(&ctx->irq_lock);
 
 	for (i = 0; i < ECHO_NUM_GPIO; i++)
 		ctx->gpio_pins[i] = gpio_pins[i];
