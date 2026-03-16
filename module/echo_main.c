@@ -1,30 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
-/*
- * echo_main.c — Module entry point and subsystem coordinator
- *
- * This is the ONLY file that knows how subsystems connect.
- * It creates each subsystem, wires their ops callbacks, and tears
+/*echo_main.c — Module entry point and subsystem coordinator
+ * only file that knows how subsystems connect.
+ * creates each subsystem, wires their ops callbacks, and tears
  * everything down on exit.
- *
- * Dependency wiring (all in this file):
- *
- *   joystick --[joy_ops]--> joy_op_direction --> echo_state_handle_input
- *
- *   state  --[state_ops]--> state_op_move_servo  --> echo_servo_set_angle
- *                           state_op_get_servo   --> echo_servo_get_angle
- *                           state_op_record_move --> echo_buffer_record
- *                           state_op_clear_buf   --> echo_buffer_clear
- *                           state_op_start_repl  --> echo_buffer_start_replay
- *                           state_op_cancel_repl --> echo_buffer_cancel_replay
- *                           state_op_notify      --> wake wq_read
- *
- *   buffer --[buf_ops]----> buf_op_move_servo  --> echo_servo_set_angle
- *                           buf_op_should_stop --> echo_state_get_mode
- *                           buf_op_replay_done --> echo_state_replay_complete
- *                           buf_op_notify      --> wake wq_read
- *
- *   chardev  --(echo_device ptr)--> all subsystem public APIs
- *   proc     --(echo_device ptr)--> all subsystem public APIs (read-only)
  */
 
 #include <linux/kernel.h>
@@ -39,7 +16,7 @@
 #include "echo_chardev.h"
 #include "echo_proc.h"
 
-/* ── Module parameters ─────────────────────────────────────────────── */
+//module parameters 
 
 static int gpio_up     = 529;  /* BCM 17 + 512 offset on Pi 4 */
 static int gpio_down   = 539;  /* BCM 27 + 512 offset on Pi 4 */
