@@ -47,10 +47,7 @@ static void replay_worker(struct work_struct *work)
 		return;
 	}
 
-	/*
-	 * Snapshot: drain all entries into a local array,
-	 * then push them back so the recording is preserved.
-	 */
+	//Snapshot: drain all entries into a local array, then push them back so the recording is preserved.
 	spin_lock(&ctx->fifo_lock);
 	count = kfifo_len(&ctx->move_fifo);
 	if (count > ECHO_FIFO_SIZE)
@@ -76,7 +73,6 @@ static void replay_worker(struct work_struct *work)
 			delay = 10;
 
 		msleep(delay);
-
 		ctx->ops->move_servo(ctx->ops_data,
 				     moves[i].servo_id,
 				     moves[i].angle);

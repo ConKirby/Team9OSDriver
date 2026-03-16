@@ -54,7 +54,7 @@ static void signal_replay_done(struct echo_device *dev)
 	notify_readers(dev);
 }
 
-//buffer ops callbacks— invoked by echo_buffer during replay
+//BUFFER OPS CALLBACKS— invoked by echo_buffer during replay
 static int buf_op_move_servo(void *data, u8 servo_id, u16 angle)
 {
 	struct echo_device *dev = data;
@@ -86,7 +86,7 @@ static const struct echo_buffer_ops buf_ops = {
 	.notify      = buf_op_notify,
 };
 
-//state ops callbacks — invoked by echo_state for cross-module actions
+//STATE OPS CALLBACKS — invoked by echo_state for cross-module actions
 static int state_op_move_servo(void *data, u8 servo_id, u16 angle)
 {
 	struct echo_device *dev = data;
@@ -139,7 +139,7 @@ static const struct echo_state_ops state_ops = {
 	.notify        = state_op_notify,
 };
 
-//joystick ops callbacks— invoked by echo_joystick on physical input
+//JOYSTICK OPS CALLBACKS— invoked by echo_joystick on physical input
 static void joy_op_direction(void *data, u8 servo_id, int delta)
 {
 	struct echo_device *dev = data;
