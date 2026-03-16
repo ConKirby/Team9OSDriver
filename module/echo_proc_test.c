@@ -6,6 +6,8 @@
  * through echo_device back-pointer.
  *
  * Dependencies: echo_device (echo_main.h) → all subsystem public APIs.
+ * 
+ * This creates the read-only statistics interface for the user to monitor
  */
 
 #include <linux/proc_fs.h>
