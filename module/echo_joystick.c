@@ -19,6 +19,11 @@
 #include "echo_types.h"
 #include "echo_joystick.h"
 
+struct echo_joystick_pin {
+	struct echo_joystick_ctx *ctx;
+	int pin_idx;
+};
+
 /* ── Private context ───────────────────────────────────────────────── */
 struct echo_joystick_ctx {
 	int gpio_pins[ECHO_NUM_GPIO];
@@ -31,6 +36,7 @@ struct echo_joystick_ctx {
 	void *ops_data;
 
 	atomic_t irq_count;
+	struct echo_joystick_pin pin_data[ECHO_NUM_GPIO];
 };
 
 /* ── GPIO names for request_threaded_irq ───────────────────────────── */
@@ -51,19 +57,9 @@ static irqreturn_t joystick_hardirq(int irq, void *data)
 
 static irqreturn_t joystick_thread_fn(int irq, void *data)
 {
-	struct echo_joystick_ctx *ctx = data;
-	int pin_idx = -1;
-	int i;
-
-	/* Identify which GPIO pin fired */
-	for (i = 0; i < ECHO_NUM_GPIO; i++) {
-		if (irq == ctx->irqs[i]) {
-			pin_idx = i;
-			break;
-		}
-	}
-	if (pin_idx < 0)
-		return IRQ_HANDLED;
+	struct echo_joystick_pin *pin = data;
+	struct echo_joystick_ctx *ctx = pin->ctx;
+	int pin_idx = pin->pin_idx;
 
 	/* Debounce */
 	spin_lock(&ctx->irq_lock);
@@ -155,11 +151,14 @@ struct echo_joystick_ctx *echo_joystick_create(
 			goto err_gpio;
 		}
 
+		ctx->pins[i].ctx     = ctx;
+		ctx->pins[i].pin_idx = i;
+
 		ret = request_threaded_irq(ctx->irqs[i],
 					   joystick_hardirq,
 					   joystick_thread_fn,
 					   IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-					   gpio_names[i], ctx);
+					   gpio_names[i], &ctx->pins[i]);
 		if (ret) {
 			pr_err("echo: joystick: IRQ %d request failed (%d)\n",
 			       ctx->irqs[i], ret);
@@ -173,7 +172,7 @@ struct echo_joystick_ctx *echo_joystick_create(
 
 err_gpio:
 	while (--i >= 0) {
-		free_irq(ctx->irqs[i], ctx);
+		free_irq(ctx->irqs[i], &ctx->pins[i]);
 		gpio_free(ctx->gpio_pins[i]);
 	}
 	kfree(ctx);
@@ -189,7 +188,7 @@ void echo_joystick_destroy(struct echo_joystick_ctx *ctx)
 
 	if (!ctx->sim_mode) {
 		for (i = ECHO_NUM_GPIO - 1; i >= 0; i--) {
-			free_irq(ctx->irqs[i], ctx);
+			free_irq(ctx->irqs[i], &ctx->pins[i]);
 			gpio_free(ctx->gpio_pins[i]);
 		}
 	}
