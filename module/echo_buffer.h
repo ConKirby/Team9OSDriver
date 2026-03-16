@@ -35,3 +35,6 @@ void echo_buffer_set_replay_speed(struct echo_buffer_ctx *ctx, u16 speed);
 int  echo_buffer_get_replay_count(struct echo_buffer_ctx *ctx);
 
 #endif /* ECHO_BUFFER_H */
+
+
+
