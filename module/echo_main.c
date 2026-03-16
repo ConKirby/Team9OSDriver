@@ -1,7 +1,6 @@
 /*echo_main.c — Module entry point and subsystem coordinator
  * only file that knows how subsystems connect.
- * creates each subsystem, wires their ops callbacks, and tears
- * everything down on exit.
+ * creates each subsystem, wires their ops callbacks, and tears everything down on exit.
  */
 
 #include <linux/kernel.h>
@@ -140,10 +139,7 @@ static const struct echo_state_ops state_ops = {
 	.notify        = state_op_notify,
 };
 
-/* ══════════════════════════════════════════════════════════════════════
- *  Joystick ops callbacks — invoked by echo_joystick on physical input
- * ══════════════════════════════════════════════════════════════════════ */
-
+//joystick ops callbacks— invoked by echo_joystick on physical input
 static void joy_op_direction(void *data, u8 servo_id, int delta)
 {
 	struct echo_device *dev = data;
@@ -154,15 +150,12 @@ static const struct echo_joystick_ops joy_ops = {
 	.on_direction = joy_op_direction,
 };
 
-/* ══════════════════════════════════════════════════════════════════════
- *  Module init / exit
- * ══════════════════════════════════════════════════════════════════════ */
-
+//module init/exit
 static int __init echo_init(void)
 {
 	int gpio_pins[ECHO_NUM_GPIO];
 
-	/* 1. Allocate the coordinator struct */
+	//allocate coordinator struct
 	echo_dev = kzalloc(sizeof(*echo_dev), GFP_KERNEL);
 	if (!echo_dev)
 		return -ENOMEM;
@@ -173,28 +166,28 @@ static int __init echo_init(void)
 	init_waitqueue_head(&echo_dev->wq_read);
 	init_waitqueue_head(&echo_dev->wq_replay_done);
 
-	/* 2. Create servo (leaf — no deps) */
+	//create servo (leaf — no deps)
 	echo_dev->servo = echo_servo_create(sim_mode);
 	if (IS_ERR(echo_dev->servo)) {
 		pr_err("echo: servo create failed\n");
 		goto err_free;
 	}
 
-	/* 3. Create buffer (deps: buf_ops -> echo_dev) */
+	//create buffer (deps: buf_ops -> echo_dev)
 	echo_dev->buffer = echo_buffer_create(&buf_ops, echo_dev);
 	if (IS_ERR(echo_dev->buffer)) {
 		pr_err("echo: buffer create failed\n");
 		goto err_servo;
 	}
 
-	/* 4. Create state machine (deps: state_ops -> echo_dev) */
+	//create state machine (deps: state_ops -> echo_dev)
 	echo_dev->state = echo_state_create(timeout_ms, &state_ops, echo_dev);
 	if (IS_ERR(echo_dev->state)) {
 		pr_err("echo: state create failed\n");
 		goto err_buffer;
 	}
 
-	/* 5. Create joystick (deps: joy_ops -> echo_dev) */
+	//create joystick (deps: joy_ops -> echo_dev)
 	gpio_pins[ECHO_GPIO_UP]     = gpio_up;
 	gpio_pins[ECHO_GPIO_DOWN]   = gpio_down;
 	gpio_pins[ECHO_GPIO_LEFT]   = gpio_left;
@@ -207,14 +200,14 @@ static int __init echo_init(void)
 		goto err_state;
 	}
 
-	/* 6. Create chardev (deps: echo_dev -> all subsystems) */
+	//create chardev (deps: echo_dev -> all subsystems)
 	echo_dev->chardev = echo_chardev_create(echo_dev);
 	if (IS_ERR(echo_dev->chardev)) {
 		pr_err("echo: chardev create failed\n");
 		goto err_joystick;
 	}
 
-	/* 7. Create proc (deps: echo_dev -> all subsystems, read-only) */
+	//create proc (deps: echo_dev -> all subsystems, read-only)
 	echo_dev->proc = echo_proc_create(echo_dev);
 	if (IS_ERR(echo_dev->proc)) {
 		pr_err("echo: proc create failed\n");
@@ -243,7 +236,7 @@ err_free:
 
 static void __exit echo_exit(void)
 {
-	/* Tear down in reverse init order */
+	//tear down in reverse init order
 	echo_proc_destroy(echo_dev->proc);
 	echo_chardev_destroy(echo_dev->chardev);
 	echo_joystick_destroy(echo_dev->joystick);
