@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * echo_servo.h — I2C / PCA9685 servo subsystem (leaf — no dependencies)
+ This is the header file for our servo echoing file
  */
 #ifndef ECHO_SERVO_H
 #define ECHO_SERVO_H
