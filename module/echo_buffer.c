@@ -60,7 +60,8 @@ static void replay_worker(struct work_struct *work)
 	if (count > ECHO_FIFO_SIZE)
 		count = ECHO_FIFO_SIZE;
 	for (i = 0; i < count; i++)
-		kfifo_get(&ctx->move_fifo, &moves[i]);
+		if (!kfifo_get(&ctx->move_fifo, &moves[i]))
+    		break;
 	for (i = 0; i < count; i++)
 		kfifo_put(&ctx->move_fifo, moves[i]);
 	spin_unlock(&ctx->fifo_lock);
@@ -137,8 +138,10 @@ int echo_buffer_record(struct echo_buffer_ctx *ctx,
 		       const struct echo_move *move)
 {
 	spin_lock(&ctx->fifo_lock);
-	if (kfifo_is_full(&ctx->move_fifo))
+	if (kfifo_is_full(&ctx->move_fifo)) {
+		pr_warn("echo: buffer: full, dropping oldest move\n");
 		kfifo_skip(&ctx->move_fifo);
+	}
 	kfifo_put(&ctx->move_fifo, *move);
 	spin_unlock(&ctx->fifo_lock);
 	return 0;
