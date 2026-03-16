@@ -218,6 +218,7 @@ int echo_state_set_mode(struct echo_state_ctx *ctx, enum echo_mode new_mode)
 	ctx->last_move_time = ktime_get();
 	ctx->ops->clear_buffer(ctx->ops_data);
 	mod_timer(&ctx->inactivity_timer,
+		atomic_set(&ctx->total_moves, 0);   /* reset counter with buffer */
 		  jiffies + msecs_to_jiffies(ctx->timeout_ms));
 
 	ctx->ops->notify(ctx->ops_data);
