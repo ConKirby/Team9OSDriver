@@ -3,7 +3,7 @@
  * echo_proc.h — /proc/echo_stats subsystem
  *
  * Read-only view of all device statistics.
- * Holds a back-pointer to echo_device for querying all subsystems.
+ * Holds a back-pointer to echo_device for querying all subsystems. 
  */
 #ifndef ECHO_PROC_H
 #define ECHO_PROC_H
