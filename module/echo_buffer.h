@@ -1,7 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/*
- * echo_buffer.h — kfifo ring buffer + replay worker subsystem
- *
+/*echo_buffer.h — kfifo ring buffer + replay worker subsystem
  * Uses echo_buffer_ops callbacks for all cross-module actions
  * (servo moves, stop checks, completion signalling).
  */
