@@ -17,11 +17,10 @@
 #include "echo_proc.h"
 
 //module parameters 
-
-static int gpio_up     = 529;  /* BCM 17 + 512 offset on Pi 4 */
-static int gpio_down   = 539;  /* BCM 27 + 512 offset on Pi 4 */
-static int gpio_left   = 534;  /* BCM 22 + 512 offset on Pi 4 */
-static int gpio_right  = 535;  /* BCM 23 + 512 offset on Pi 4 */
+static int gpio_up     = 529;  //BCM 17 + 512 offset on Pi 4
+static int gpio_down   = 539;  //BCM 27 + 512 offset on Pi 4
+static int gpio_left   = 534;  //BCM 22 + 512 offset on Pi 4
+static int gpio_right  = 535;  //BCM 23 + 512 offset on Pi 4
 module_param(gpio_up,     int, 0444);
 module_param(gpio_down,   int, 0444);
 module_param(gpio_left,   int, 0444);
@@ -40,20 +39,15 @@ static bool sim_mode = true;
 module_param(sim_mode, bool, 0444);
 MODULE_PARM_DESC(sim_mode, "Simulation mode (no real hardware)");
 
-/* ── Global device (single-instance driver) ────────────────────────── */
-
+//global device (single instance driver)
 static struct echo_device *echo_dev;
 
-/* ══════════════════════════════════════════════════════════════════════
- *  Notification helpers
- * ══════════════════════════════════════════════════════════════════════ */
-
+//notification helpers
 static void notify_readers(struct echo_device *dev)
 {
 	WRITE_ONCE(dev->new_data_avail, true);
 	wake_up_interruptible(&dev->wq_read);
 }
-
 static void signal_replay_done(struct echo_device *dev)
 {
 	WRITE_ONCE(dev->replay_finished, true);
@@ -61,10 +55,7 @@ static void signal_replay_done(struct echo_device *dev)
 	notify_readers(dev);
 }
 
-/* ══════════════════════════════════════════════════════════════════════
- *  Buffer ops callbacks — invoked by echo_buffer during replay
- * ══════════════════════════════════════════════════════════════════════ */
-
+//buffer ops callbacks— invoked by echo_buffer during replay
 static int buf_op_move_servo(void *data, u8 servo_id, u16 angle)
 {
 	struct echo_device *dev = data;
@@ -96,10 +87,7 @@ static const struct echo_buffer_ops buf_ops = {
 	.notify      = buf_op_notify,
 };
 
-/* ══════════════════════════════════════════════════════════════════════
- *  State ops callbacks — invoked by echo_state for cross-module actions
- * ══════════════════════════════════════════════════════════════════════ */
-
+//state ops callbacks — invoked by echo_state for cross-module actions
 static int state_op_move_servo(void *data, u8 servo_id, u16 angle)
 {
 	struct echo_device *dev = data;
