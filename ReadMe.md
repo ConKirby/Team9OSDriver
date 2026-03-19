@@ -4,16 +4,15 @@ A custom Linux loadable kernel module (LKM) character device driver that control
 
 > Built as part of ISE Block 3 — Team 9
 
-<!-- TODO: Add demo video/gif here -->
-<!-- ![Demo](docs/media/demo.gif) -->
-
 ## Demo
 
-<!-- Add images and videos of your hardware setup and the ncurses UI here -->
+<video src="docs/media/demo.mp4" controls width="600"></video>
 
-| Hardware Setup | ncurses UI |
-|:-:|:-:|
-| *Coming soon* | *Coming soon* |
+## Hardware Setup
+
+<p align="center">
+  <img src="docs/media/hardware_setup.jpeg" alt="Hardware Setup" width="600"/>
+</p>
 
 ---
 
