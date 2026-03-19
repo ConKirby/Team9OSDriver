@@ -6,7 +6,7 @@ A custom Linux loadable kernel module (LKM) character device driver that control
 
 ## Demo
 
-<video src="https://github.com/ConKirby/Team9OSDriver/raw/main/docs/media/demo.mp4" controls width="600"></video>
+![Demo](docs/media/demo.gif)
 
 ## Hardware Setup
 
