@@ -15,4 +15,4 @@ void echo_chardev_destroy(struct echo_chardev_ctx *ctx);
 
 int echo_chardev_get_open_count(struct echo_chardev_ctx *ctx);
 
-#endif /* ECHO_CHARDEV_H */
+#endif

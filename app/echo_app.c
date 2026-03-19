@@ -44,7 +44,6 @@ int main(void)
 	struct pollfd pfd;
 	int ch;
 
-	// Install SIGINT handler
 	sa.sa_handler = sigint_handler;
 	// dont block other signals while handling this one
 	sigemptyset(&sa.sa_mask);
