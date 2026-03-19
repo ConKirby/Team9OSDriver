@@ -1,10 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
 // echo_chardev.c — Character device file_operations for /dev/echo_robot
 
-// The chardev is the user-space gateway.  It holds a back-pointer to
-// echo_device and calls all subsystem APIs through it.
-
-// Dependencies: echo_device (echo_main.h) → all subsystem public APIs.
+// The chardev is the user-space gateway. 
+// Dependencies: echo_device (echo_main.h)
 
 
 #include <linux/cdev.h>
@@ -23,7 +20,7 @@
 #include "echo_buffer.h"
 #include "echo_joystick.h"
 
-// Private context
+// Device REgistration Chain
 struct echo_chardev_ctx {
 	 // The kernel character device object
 	struct cdev cdev;
@@ -45,14 +42,14 @@ struct echo_chardev_ctx {
 // Gathers states from all susbsytems and puts them in one struct
 static void build_snapshot(struct echo_device *dev, struct echo_snapshot *snap)
 {
-	snap->mode          = (u32)echo_state_get_mode(dev->state);
-	snap->pan_angle     = echo_servo_get_angle(dev->servo, ECHO_SERVO_PAN);
-	snap->tilt_angle    = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT);
-	snap->tilt2_angle   = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT2);
-	snap->buffer_count  = echo_buffer_count(dev->buffer);
-	snap->total_moves   = (u32)echo_state_get_total_moves(dev->state);
+	snap->mode = (u32)echo_state_get_mode(dev->state); // IDLE, TEACH, REPLAY
+	snap->pan_angle = echo_servo_get_angle(dev->servo, ECHO_SERVO_PAN);
+	snap->tilt_angle = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT);
+	snap->tilt2_angle = echo_servo_get_angle(dev->servo, ECHO_SERVO_TILT2);
+	snap->buffer_count = echo_buffer_count(dev->buffer); // number of moved recorded
+	snap->total_moves= (u32)echo_state_get_total_moves(dev->state); // lifetime counter
 	snap->total_replays = (u32)echo_buffer_get_replay_count(dev->buffer);
-	snap->irq_count     = (u32)echo_joystick_get_irq_count(dev->joystick);
+	snap->irq_count = (u32)echo_joystick_get_irq_count(dev->joystick); // total joystick interrupts
 }
 
 // Guarantees a single store instruction
@@ -82,8 +79,10 @@ static int echo_open(struct inode *inode, struct file *filp)
 }
 
 // On fd close
+// called on close
 static int echo_release(struct inode *inode, struct file *filp)
 {
+	// retrieve context pointer from echo open
 	struct echo_chardev_ctx *ctx = filp->private_data;
 	// Make sure the decrementing of the int is atomic
 	mutex_lock(&ctx->open_lock);
@@ -94,6 +93,7 @@ static int echo_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+// runs on read
 static ssize_t echo_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)
 {
 	struct echo_chardev_ctx *ctx = filp->private_data;
@@ -143,6 +143,7 @@ static ssize_t echo_write(struct file *filp, const char __user *buf, size_t coun
 
 	switch (cmd.command) {
 	case ECHO_CMD_TEACH:
+	// non blocking
 		echo_state_set_mode(dev->state, ECHO_MODE_TEACH);
 		break;
 
@@ -244,16 +245,16 @@ static long echo_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 // file operations table
 static const struct file_operations echo_fops = {
-	.owner          = THIS_MODULE,
-	.open           = echo_open,
-	.release        = echo_release,
-	.read           = echo_read,
-	.write          = echo_write,
+	.owner = THIS_MODULE,
+	.open = echo_open,
+	.release= echo_release,
+	.read = echo_read,
+	.write= echo_write,
+	// runs without Big Kernel Lock for performance 
 	.unlocked_ioctl = echo_ioctl,
 };
 
 //Public API
-
 struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 {
 	struct echo_chardev_ctx *ctx;
@@ -269,7 +270,7 @@ struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 	mutex_init(&ctx->open_lock);
 	ctx->dev = dev;
 
-	// Allocate a dynamic major + minor
+	//1.  Allocate a dynamic major + minor
 	// alloc is dynamic where as register_ is static
 	// need dynamic as it allows the kernel to pick an unused one
 	ret = alloc_chrdev_region(&ctx->devno, 0, 1, ECHO_DEVICE_NAME);
@@ -278,7 +279,7 @@ struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 		goto fail_alloc;
 	}
 
-	// Initialise and add to file ops table
+	//2.  Initialise and add to file ops table
 	cdev_init(&ctx->cdev, &echo_fops);
 	// sets module ownership and prevents the module from being unloaded
 	ctx->cdev.owner = THIS_MODULE;
@@ -291,7 +292,7 @@ struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 		goto fail_cdev;
 	}
 
-	// Create device class echo
+	//3.  Create device class echo
 	ctx->dev_class = class_create(ECHO_CLASS_NAME);
 	// checks if the returned pointer is an encoded error or not
 	if (IS_ERR(ctx->dev_class)) {
@@ -300,7 +301,7 @@ struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 		goto fail_class;
 	}
 
-	// Create the /dev node
+	//4. Create the device
 	ctx->device = device_create(ctx->dev_class, NULL, ctx->devno, NULL, ECHO_DEVICE_NAME);
 	if (IS_ERR(ctx->device)) {
 		ret = PTR_ERR(ctx->device);
@@ -313,20 +314,26 @@ struct echo_chardev_ctx *echo_chardev_create(struct echo_device *dev)
 	pr_info("echo: chardev: registered (%d:%d)\n", MAJOR(ctx->devno), MINOR(ctx->devno));
 	return ctx;
 
-	// Kernel clean up fall through 
+	// Kernel clean up fall through  if there is a failure
 fail_device:
+// 4.
 	class_destroy(ctx->dev_class);
 fail_class:
+//3.
 	cdev_del(&ctx->cdev);
 fail_cdev:
+// 2.
 	unregister_chrdev_region(ctx->devno, 1);
+
 fail_alloc:
+// 1.
 	kfree(ctx);
 	// converts a negative error code to a pointer value
 	return ERR_PTR(ret);
 }
 
 // reverse order of creation
+// called in main
 void echo_chardev_destroy(struct echo_chardev_ctx *ctx)
 {
 	if (!ctx)
