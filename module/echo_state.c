@@ -41,8 +41,7 @@ struct echo_state_ctx {
 
 static void inactivity_timer_fn(struct timer_list *t)
 {
-	struct echo_state_ctx *ctx =
-		timer_container_of(ctx, t, inactivity_timer);
+	struct echo_state_ctx *ctx = from_timer(ctx, t, inactivity_timer);
 	unsigned long flags;
 
 	spin_lock_irqsave(&ctx->mode_lock, flags);
