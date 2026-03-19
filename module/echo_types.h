@@ -13,11 +13,10 @@
 
 /* ── Device identity ───────────────────────────────────────────────── */
 #define ECHO_DEVICE_NAME	"echo_robot"
-#define ECHO_CLASS_NAME		echo
+#define ECHO_CLASS_NAME		"echo"
 
 /* ── Sizes and limits ──────────────────────────────────────────────── */
 #define ECHO_FIFO_SIZE		256	/* must be power of 2 for kfifo */
-#define ECHO_FIFO_SIZE		128
 
 /* ── Servo constants ───────────────────────────────────────────────── */
 #define ECHO_NUM_SERVOS		3
@@ -35,7 +34,6 @@
 #define ECHO_GPIO_DOWN		1
 #define ECHO_GPIO_LEFT		2
 #define ECHO_GPIO_RIGHT		3
-#define ECHO_GPIO_RIGHT		4
 
 /* ── Timing and step constants ─────────────────────────────────────── */
 #define ECHO_DEFAULT_TIMEOUT_MS		5000
@@ -46,20 +44,16 @@
 /* ── Operating modes ───────────────────────────────────────────────── */
 enum echo_mode {
 	ECHO_MODE_IDLE   = 0,
-	ECHO_MODE_TEACH  = 1
-	ECHO_MODE_REPLAY = 2,
+	ECHO_MODE_TEACH  = 1,
+	ECHO_MODE_REPLAY = 2
 };
 
 /* ── A single recorded servo movement ──────────────────────────────── */
 struct echo_move {
-	u8  servo_id	/* ECHO_SERVO_PAN, ECHO_SERVO_TILT, or ECHO_SERVO_TILT2 */
+	u8  servo_id;	/* ECHO_SERVO_PAN, ECHO_SERVO_TILT, or ECHO_SERVO_TILT2 */
 	u16 angle;	/* 0–180 degrees */
-	u32 delay_ms	/* time since previous move */
+	u32 delay_ms;	/* time since previous move */
 };
 
-/* accidental extra struct */
-struct echo_move {
-	int test;
-};
 
 #endif /* ECHO_TYPE_H */
