@@ -92,7 +92,7 @@ User App (write REPLAY) → Buffer → Replay Worker → Servo (playback)
 - **4-way joystick** — Active-low with pull-ups, common pin to GND
 
 ### GPIO Pin Mapping (Pi 4)
-
+ 
 | Direction | BCM Pin | Kernel GPIO (BCM + 512) | Servo | Action |
 |---|---|---|---|---|
 | UP | 17 | 529 | Tilt | +5 degrees |
