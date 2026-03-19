@@ -83,7 +83,7 @@ User App (write REPLAY) → Buffer → Replay Worker → Servo (playback)
 | **Keyboard Control** | Switch modes, trigger replay, adjust speed, reset — all from the terminal |
 
 ---
-
+ 
 ## Hardware
 
 - **Raspberry Pi 4** (Broadcom BCM2711)
